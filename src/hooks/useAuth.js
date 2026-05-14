@@ -6,6 +6,29 @@ export function useAuth() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
+    // Processar token que vem na URL após o OAuth (HashRouter coloca em window.location.hash)
+    const hash = window.location.hash
+    if (hash && hash.includes('access_token')) {
+      // Extrair a parte do token (ignora o #/login# ou #/ inicial)
+      const tokenPart = hash.includes('#/login#') 
+        ? hash.split('#/login#')[1]
+        : hash.split('#')[1]
+      
+      if (tokenPart) {
+        supabase.auth.setSession(
+          Object.fromEntries(new URLSearchParams(tokenPart))
+        ).then(({ data, error }) => {
+          if (data?.session) {
+            setUser(data.session.user)
+            // Limpar o token da URL
+            window.history.replaceState(null, '', window.location.pathname + '#/')
+          }
+          setLoading(false)
+        })
+        return
+      }
+    }
+
     supabase.auth.getSession().then(({ data: { session } }) => {
       setUser(session?.user ?? null)
       setLoading(false)
