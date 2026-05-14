@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { HashRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { useAuth } from './hooks/useAuth'
 import Layout from './components/Layout/Layout'
 import Login from './pages/Login'
@@ -34,7 +34,7 @@ function LoginRoute() {
 
 export default function App() {
   return (
-    <BrowserRouter>
+    <HashRouter>
       <Routes>
         <Route path="/login" element={<LoginRoute />} />
         <Route path="/" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
@@ -47,6 +47,6 @@ export default function App() {
         <Route path="/configuracoes" element={<ProtectedRoute><Configuracoes /></ProtectedRoute>} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
-    </BrowserRouter>
+    </HashRouter>
   )
 }

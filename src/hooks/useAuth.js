@@ -22,7 +22,7 @@ export function useAuth() {
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'github',
       options: {
-        redirectTo: 'https://anfers1985.github.io/motor-cct',
+        redirectTo: 'https://anfers1985.github.io/motor-cct/#/login',
       }
     })
     if (error) console.error('Erro no login:', error)
