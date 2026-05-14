@@ -25,6 +25,13 @@ function ProtectedRoute({ children }) {
   return <Layout>{children}</Layout>
 }
 
+function LoginRoute() {
+  const { user, loading } = useAuth()
+  if (loading) return null
+  if (user) return <Navigate to="/" replace />
+  return <Login />
+}
+
 export default function App() {
   return (
     <BrowserRouter>
@@ -42,11 +49,4 @@ export default function App() {
       </Routes>
     </BrowserRouter>
   )
-}
-
-function LoginRoute() {
-  const { user, loading } = useAuth()
-  if (loading) return null
-  if (user) return <Navigate to="/" replace />
-  return <Login />
 }
