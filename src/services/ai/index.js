@@ -139,15 +139,23 @@ async function callCohere(config, texto) {
 }
 
 function parseJSON(raw) {
-  let text = raw.trim()
-  // Remove markdown fences
+  let text = (raw || '').trim()
+  console.log('RESPOSTA BRUTA DA IA:', text.slice(0, 500))
   text = text.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```$/i, '')
   const start = text.indexOf('[')
   const end = text.lastIndexOf(']')
-  if (start === -1 || end === -1) throw new Error('Resposta da IA não contém array JSON válido')
-  return JSON.parse(text.slice(start, end + 1))
+  if (start === -1 || end === -1) {
+    console.log('JSON NAO ENCONTRADO. Texto completo:', text.slice(0, 1000))
+    throw new Error('Resposta da IA não contém array JSON válido')
+  }
+  try {
+    return JSON.parse(text.slice(start, end + 1))
+  } catch(e) {
+    console.log('ERRO AO PARSEAR JSON:', e.message)
+    console.log('Trecho:', text.slice(start, start + 500))
+    throw new Error('Resposta da IA não contém array JSON válido')
+  }
 }
-
 export async function extrairClausulas(texto, { isPDF = false, pdfBase64 = null } = {}) {
   const config = getAIConfig()
   if (!config?.provedor || !config?.chave) {
