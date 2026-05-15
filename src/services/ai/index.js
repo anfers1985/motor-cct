@@ -140,20 +140,29 @@ async function callCohere(config, texto) {
 
 function parseJSON(raw) {
   let text = (raw || '').trim()
-  console.log('RESPOSTA BRUTA DA IA:', text.slice(0, 500))
-  text = text.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```$/i, '')
+  // Remove markdown fences de qualquer posição
+  text = text.replace(/```json/gi, '').replace(/```/g, '').trim()
+  // Encontra o array JSON
   const start = text.indexOf('[')
   const end = text.lastIndexOf(']')
-  if (start === -1 || end === -1) {
-    console.log('JSON NAO ENCONTRADO. Texto completo:', text.slice(0, 1000))
+  if (start === -1 || end === -1 || end < start) {
     throw new Error('Resposta da IA não contém array JSON válido')
   }
   try {
     return JSON.parse(text.slice(start, end + 1))
   } catch(e) {
-    console.log('ERRO AO PARSEAR JSON:', e.message)
-    console.log('Trecho:', text.slice(start, start + 500))
-    throw new Error('Resposta da IA não contém array JSON válido')
+    // Tenta corrigir JSON truncado adicionando fechamento
+    try {
+      let truncado = text.slice(start)
+      // Fecha objetos e array abertos
+      const opens = (truncado.match(/\{/g) || []).length
+      const closes = (truncado.match(/\}/g) || []).length
+      for (let i = 0; i < opens - closes; i++) truncado += '}'
+      if (!truncado.trim().endsWith(']')) truncado += ']'
+      return JSON.parse(truncado)
+    } catch(e2) {
+      throw new Error('Resposta da IA não contém array JSON válido')
+    }
   }
 }
 export async function extrairClausulas(texto, { isPDF = false, pdfBase64 = null } = {}) {
