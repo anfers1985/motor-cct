@@ -64,16 +64,50 @@ ${texto}`
 
 async function callGemini(config, texto) {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${config.modelo}:generateContent?key=${config.chave}`
-  const body = {
-    contents: [{ parts: [{ text: PROMPT_BASE(texto) }] }],
-    generationConfig: { temperature: 0.1, maxOutputTokens: 65536 }
+  
+  // Divide o texto em chunks de ~15000 caracteres se for muito grande
+  const MAX_CHARS = 15000
+  const chunks = []
+  if (texto.length > MAX_CHARS) {
+    // Divide por parágrafos para não cortar no meio de uma cláusula
+    const paragrafos = texto.split(/\n{2,}/)
+    let chunk = ''
+    for (const p of paragrafos) {
+      if ((chunk + p).length > MAX_CHARS && chunk.length > 0) {
+        chunks.push(chunk)
+        chunk = p
+      } else {
+        chunk += '\n\n' + p
+      }
+    }
+    if (chunk) chunks.push(chunk)
+  } else {
+    chunks.push(texto)
   }
-  const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
-  if (!res.ok) throw new Error(`Gemini ${res.status}: ${await res.text()}`)
-  const data = await res.json()
-  const parts = data.candidates?.[0]?.content?.parts || []
-  const texts = parts.map(p => p.text || '').filter(Boolean)
-  return texts[texts.length - 1] || ''
+
+  // Processa cada chunk e junta os resultados
+  let todasClausulas = []
+  for (const chunk of chunks) {
+    const body = {
+      contents: [{ parts: [{ text: PROMPT_BASE(chunk) }] }],
+      generationConfig: { temperature: 0.1, maxOutputTokens: 65536 }
+    }
+    const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+    if (!res.ok) throw new Error(`Gemini ${res.status}: ${await res.text()}`)
+    const data = await res.json()
+    const parts = data.candidates?.[0]?.content?.parts || []
+    const texts = parts.map(p => p.text || '').filter(Boolean)
+    const raw = texts[texts.length - 1] || ''
+    try {
+      const clausulas = parseJSON(raw)
+      todasClausulas = todasClausulas.concat(clausulas)
+    } catch(e) {
+      console.warn('Chunk ignorado por erro de parse:', e.message)
+    }
+  }
+  
+  if (todasClausulas.length === 0) throw new Error('Nenhuma cláusula extraída')
+  return JSON.stringify(todasClausulas)
 }
 
 async function callClaude(config, texto, isPDF, pdfBase64) {
