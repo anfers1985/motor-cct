@@ -66,12 +66,16 @@ async function callGemini(config, texto) {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${config.modelo}:generateContent?key=${config.chave}`
   const body = {
     contents: [{ parts: [{ text: PROMPT_BASE(texto) }] }],
-    generationConfig: { temperature: 0.1, maxOutputTokens: 8192 }
+    generationConfig: { temperature: 0.1, maxOutputTokens: 16384 }
   }
   const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
   if (!res.ok) throw new Error(`Gemini ${res.status}: ${await res.text()}`)
   const data = await res.json()
-  return data.candidates?.[0]?.content?.parts?.[0]?.text || ''
+  // Gemini 2.5 pode retornar múltiplos parts (thinking + resposta)
+  const parts = data.candidates?.[0]?.content?.parts || []
+  // Pega o último part que contém o JSON (ignora parts de thinking)
+  const texts = parts.map(p => p.text || '').filter(Boolean)
+  return texts[texts.length - 1] || ''
 }
 
 async function callClaude(config, texto, isPDF, pdfBase64) {
