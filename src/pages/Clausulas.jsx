@@ -4,6 +4,31 @@ import { useAuth } from '../hooks/useAuth'
 import { CATEGORIAS, CATEGORIA_CORES, TAGS_PREDEFINIDAS } from '../utils/categorias'
 import Badge from '../components/UI/Badge'
 
+function ordenarClausulas(clausulas) {
+  return [...clausulas].sort((a, b) => {
+    const toNum = (n) => {
+      if (!n) return 9999
+      const nums = { 'PRIMEIRA': 1, 'SEGUNDA': 2, 'TERCEIRA': 3, 'QUARTA': 4, 'QUINTA': 5,
+        'SEXTA': 6, 'SÉTIMA': 7, 'OITAVA': 8, 'NONA': 9, 'DÉCIMA': 10,
+        'DÉCIMA PRIMEIRA': 11, 'DÉCIMA SEGUNDA': 12, 'DÉCIMA TERCEIRA': 13, 'DÉCIMA QUARTA': 14,
+        'DÉCIMA QUINTA': 15, 'DÉCIMA SEXTA': 16, 'DÉCIMA SÉTIMA': 17, 'DÉCIMA OITAVA': 18,
+        'DÉCIMA NONA': 19, 'VIGÉSIMA': 20, 'TRIGÉSIMA': 30, 'QUADRAGÉSIMA': 40,
+        'QUINQUAGÉSIMA': 50 }
+      const upper = String(n).toUpperCase().trim()
+      if (nums[upper]) return nums[upper]
+      // Tenta extrair número do texto
+      const match = upper.match(/(\d+)/)
+      if (match) return parseInt(match[1])
+      // Ordinais compostos
+      for (const [key, val] of Object.entries(nums)) {
+        if (upper.startsWith(key)) return val
+      }
+      return 9999
+    }
+    return toNum(a.numero) - toNum(b.numero)
+  })
+}
+
 export default function Clausulas() {
   const { user } = useAuth()
   const [instrumentos, setInstrumentos] = useState([])
@@ -11,11 +36,10 @@ export default function Clausulas() {
   const [filtros, setFiltros] = useState({ instrumento: '', categoria: '', subcategoria: '', busca: '' })
   const [expandido, setExpandido] = useState(null)
   const [loading, setLoading] = useState(false)
-  const [editandoTag, setEditandoTag] = useState(null)
 
   useEffect(() => {
     if (!user) return
-    supabase.from('instrumentos').select('id,nome,tipo').eq('user_id', user.id).eq('status_processamento','processado').order('nome')
+    supabase.from('instrumentos').select('id,nome,tipo').eq('user_id', user.id).eq('status_processamento', 'processado').order('nome')
       .then(({ data }) => setInstrumentos(data || []))
   }, [user])
 
@@ -26,7 +50,10 @@ export default function Clausulas() {
     if (filtros.categoria) q = q.eq('categoria', filtros.categoria)
     if (filtros.subcategoria) q = q.eq('subcategoria', filtros.subcategoria)
     if (filtros.busca) q = q.or(`titulo.ilike.%${filtros.busca}%,conteudo.ilike.%${filtros.busca}%`)
-    q.order('numero').then(({ data }) => { setClausulas(data || []); setLoading(false) })
+    q.then(({ data }) => {
+      setClausulas(ordenarClausulas(data || []))
+      setLoading(false)
+    })
   }, [filtros])
 
   async function toggleTag(clausula, tag) {
@@ -45,38 +72,36 @@ export default function Clausulas() {
         <p className="text-slate-500 text-sm">Busque e navegue pelas cláusulas de qualquer instrumento processado</p>
       </div>
 
-      {/* Filtros */}
       <div className="card p-4 mb-5">
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
           <div className="col-span-2 lg:col-span-1">
             <label className="label">Instrumento</label>
-            <select className="input" value={filtros.instrumento} onChange={e => setFiltros({...filtros, instrumento: e.target.value, categoria: '', subcategoria: ''})}>
+            <select className="input" value={filtros.instrumento} onChange={e => setFiltros({ ...filtros, instrumento: e.target.value, categoria: '', subcategoria: '' })}>
               <option value="">Selecione um instrumento...</option>
               {instrumentos.map(i => <option key={i.id} value={i.id}>{i.tipo} — {i.nome}</option>)}
             </select>
           </div>
           <div>
             <label className="label">Categoria</label>
-            <select className="input" value={filtros.categoria} onChange={e => setFiltros({...filtros, categoria: e.target.value, subcategoria: ''})}>
+            <select className="input" value={filtros.categoria} onChange={e => setFiltros({ ...filtros, categoria: e.target.value, subcategoria: '' })}>
               <option value="">Todas</option>
               {Object.keys(CATEGORIAS).map(c => <option key={c}>{c}</option>)}
             </select>
           </div>
           <div>
             <label className="label">Subcategoria</label>
-            <select className="input" value={filtros.subcategoria} onChange={e => setFiltros({...filtros, subcategoria: e.target.value})} disabled={!filtros.categoria}>
+            <select className="input" value={filtros.subcategoria} onChange={e => setFiltros({ ...filtros, subcategoria: e.target.value })} disabled={!filtros.categoria}>
               <option value="">Todas</option>
               {subcats.map(s => <option key={s}>{s}</option>)}
             </select>
           </div>
           <div>
             <label className="label">Busca livre</label>
-            <input className="input" placeholder="Palavra no título ou conteúdo..." value={filtros.busca} onChange={e => setFiltros({...filtros, busca: e.target.value})} />
+            <input className="input" placeholder="Palavra no título ou conteúdo..." value={filtros.busca} onChange={e => setFiltros({ ...filtros, busca: e.target.value })} />
           </div>
         </div>
       </div>
 
-      {/* Resultados */}
       {!filtros.instrumento && (
         <div className="card p-10 text-center text-slate-400">
           <p className="text-4xl mb-3">🔍</p>
@@ -95,7 +120,6 @@ export default function Clausulas() {
             )}
             {clausulas.map(c => (
               <div key={c.id} className="card overflow-hidden">
-                {/* Header do card */}
                 <button
                   className="w-full text-left p-4 hover:bg-surface-50 transition-colors"
                   onClick={() => setExpandido(expandido === c.id ? null : c.id)}
@@ -103,14 +127,13 @@ export default function Clausulas() {
                   <div className="flex items-start justify-between gap-3">
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-1 flex-wrap">
-                        {c.numero && <span className="text-xs font-mono text-slate-400">{c.numero}</span>}
+                        {c.numero && <span className="text-xs font-mono text-slate-400 bg-slate-50 px-2 py-0.5 rounded">{c.numero}</span>}
                         <Badge className={CATEGORIA_CORES[c.categoria] || 'bg-slate-100 text-slate-600'}>{c.categoria}</Badge>
                         {c.subcategoria && <span className="text-xs text-slate-400">{c.subcategoria}</span>}
                         {c.valor_monetario && <span className="text-xs font-medium text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded">{c.valor_monetario}</span>}
                         {c.percentual && <span className="text-xs font-medium text-blue-700 bg-blue-50 px-2 py-0.5 rounded">{c.percentual}</span>}
                       </div>
                       <p className="font-medium text-slate-800">{c.titulo}</p>
-                      {/* Tags */}
                       {(c.tags || []).length > 0 && (
                         <div className="flex gap-1 mt-1 flex-wrap">
                           {c.tags.map(tag => {
@@ -124,16 +147,16 @@ export default function Clausulas() {
                   </div>
                 </button>
 
-                {/* Conteúdo expandido */}
                 {expandido === c.id && (
                   <div className="border-t border-slate-100 px-4 pb-4 pt-3">
                     {c.vigencia_especifica && (
                       <p className="text-xs text-amber-700 bg-amber-50 px-3 py-1.5 rounded-lg mb-3">⚠️ Vigência específica: {c.vigencia_especifica}</p>
                     )}
+                    {c.observacoes && (
+                      <p className="text-xs text-blue-700 bg-blue-50 px-3 py-1.5 rounded-lg mb-3">💡 {c.observacoes}</p>
+                    )}
                     <p className="text-sm text-slate-700 leading-relaxed whitespace-pre-wrap">{c.conteudo}</p>
-                    {c.observacoes && <p className="text-xs text-slate-500 mt-3 italic">{c.observacoes}</p>}
 
-                    {/* Gerenciar tags */}
                     <div className="mt-4 pt-3 border-t border-slate-100">
                       <p className="text-xs font-medium text-slate-400 mb-2">Etiquetas:</p>
                       <div className="flex gap-2 flex-wrap">
