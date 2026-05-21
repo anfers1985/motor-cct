@@ -2,6 +2,7 @@ import jsPDF from 'jspdf'
 import 'jspdf-autotable'
 import { CATEGORIAS } from '../../utils/categorias'
 import { vigenciaStatus } from '../../utils/formatters'
+import { ordenarClausulas } from '../../utils/ordenacao'
 
 function statusVigencia(fim) {
   const s = vigenciaStatus(fim)
@@ -11,40 +12,18 @@ function statusVigencia(fim) {
   return 'INDEFINIDO'
 }
 
-function ordenarClausulas(clausulas) {
-  const nums = {
-    'PRIMEIRA': 1, 'SEGUNDA': 2, 'TERCEIRA': 3, 'QUARTA': 4, 'QUINTA': 5,
-    'SEXTA': 6, 'SÉTIMA': 7, 'OITAVA': 8, 'NONA': 9, 'DÉCIMA': 10,
-    'DÉCIMA PRIMEIRA': 11, 'DÉCIMA SEGUNDA': 12, 'DÉCIMA TERCEIRA': 13,
-    'DÉCIMA QUARTA': 14, 'DÉCIMA QUINTA': 15, 'DÉCIMA SEXTA': 16,
-    'DÉCIMA SÉTIMA': 17, 'DÉCIMA OITAVA': 18, 'DÉCIMA NONA': 19,
-    'VIGÉSIMA': 20, 'TRIGÉSIMA': 30, 'QUADRAGÉSIMA': 40, 'QUINQUAGÉSIMA': 50
-  }
-  const toNum = (n) => {
-    if (!n) return 9999
-    const upper = String(n).toUpperCase().trim()
-    if (nums[upper]) return nums[upper]
-    const match = upper.match(/(\d+)/)
-    if (match) return parseInt(match[1])
-    for (const [key, val] of Object.entries(nums)) {
-      if (upper.startsWith(key)) return val
-    }
-    return 9999
-  }
-  return [...clausulas].sort((a, b) => toNum(a.numero) - toNum(b.numero))
-}
-
 function addHeader(doc, title, subtitle = '') {
   doc.setFillColor(26, 79, 255)
   doc.rect(0, 0, 210, 30, 'F')
   doc.setTextColor(255, 255, 255)
   doc.setFontSize(14)
   doc.setFont('helvetica', 'bold')
-  doc.text('Motor CCT ⚖️', 14, 11)
+  doc.text('Motor CCT', 14, 11)
   doc.setFontSize(9)
   doc.setFont('helvetica', 'normal')
-  doc.text(title, 14, 19)
-  if (subtitle) doc.text(subtitle, 14, 25)
+  const titleLines = doc.splitTextToSize(title, 180)
+  doc.text(titleLines, 14, 19)
+  if (subtitle) doc.text(subtitle, 14, 26)
   doc.setTextColor(0, 0, 0)
 }
 
@@ -54,16 +33,9 @@ function addFooter(doc) {
     doc.setPage(i)
     doc.setFontSize(7)
     doc.setTextColor(160, 160, 160)
-    doc.text(`Gerado em ${new Date().toLocaleDateString('pt-BR')} — Motor CCT`, 14, 291)
-    doc.text(`Página ${i} de ${pageCount}`, 196, 291, { align: 'right' })
+    doc.text('Gerado em ' + new Date().toLocaleDateString('pt-BR') + ' — Motor CCT', 14, 291)
+    doc.text('Pagina ' + i + ' de ' + pageCount, 196, 291, { align: 'right' })
   }
-}
-
-function addText(doc, text, x, y, maxWidth, fontSize = 9) {
-  doc.setFontSize(fontSize)
-  const lines = doc.splitTextToSize(text || '', maxWidth)
-  doc.text(lines, x, y)
-  return lines.length * (fontSize * 0.4 + 0.5)
 }
 
 export function gerarPDFInstrumento(instrumento, clausulas, empresa, operacao, sLab, sPat) {
@@ -73,34 +45,37 @@ export function gerarPDFInstrumento(instrumento, clausulas, empresa, operacao, s
 
   addHeader(
     doc,
-    `${instrumento?.tipo || ''} — ${instrumento?.nome || 'Instrumento Coletivo'}`,
-    `Vigência: ${instrumento?.vigencia_inicio || '?'} a ${instrumento?.vigencia_fim || '?'} | Status: ${status}`
+    (instrumento?.tipo || '') + ' — ' + (instrumento?.nome || 'Instrumento Coletivo'),
+    'Vigencia: ' + (instrumento?.vigencia_inicio || '?') + ' a ' + (instrumento?.vigencia_fim || '?') + ' | Status: ' + status
   )
 
   let y = 38
 
-  // Dados gerais
+  // Caixa de dados gerais
   doc.setFillColor(248, 250, 252)
-  doc.roundedRect(10, y, 190, 28, 2, 2, 'F')
+  doc.roundedRect(10, y, 190, 26, 2, 2, 'F')
   y += 5
   doc.setFontSize(8)
-  doc.setFont('helvetica', 'bold')
-  doc.setTextColor(80, 80, 80)
 
   const info = [
-    ['Empresa:', empresa?.razao_social || '—', 'Operação:', operacao?.nome || '—'],
-    ['Sind. Laboral:', sLab?.razao_social || '—', 'Sind. Patronal:', sPat?.razao_social || '—'],
+    ['Empresa:', (empresa?.razao_social || '—').slice(0, 50), 'Operacao:', (operacao?.nome || '—').slice(0, 40)],
+    ['Sind. Laboral:', (sLab?.razao_social || '—').slice(0, 50), 'Sind. Patronal:', (sPat?.razao_social || '—').slice(0, 40)],
   ]
   for (const row of info) {
-    doc.setFont('helvetica', 'bold'); doc.text(row[0], 14, y)
-    doc.setFont('helvetica', 'normal'); doc.text(String(row[1]).slice(0, 45), 35, y)
-    doc.setFont('helvetica', 'bold'); doc.text(row[2], 110, y)
-    doc.setFont('helvetica', 'normal'); doc.text(String(row[3]).slice(0, 45), 132, y)
+    doc.setFont('helvetica', 'bold')
+    doc.setTextColor(80, 80, 80)
+    doc.text(row[0], 14, y)
+    doc.setFont('helvetica', 'normal')
+    doc.text(String(row[1]), 38, y)
+    doc.setFont('helvetica', 'bold')
+    doc.text(row[2], 110, y)
+    doc.setFont('helvetica', 'normal')
+    doc.text(String(row[3]), 134, y)
     y += 5
   }
   y += 8
 
-  // Agrupar por categoria na ordem definida
+  // Agrupar por categoria mantendo a ordem do CATEGORIAS
   const grupos = {}
   for (const c of ordenadas) {
     if (!grupos[c.categoria]) grupos[c.categoria] = []
@@ -125,66 +100,68 @@ export function gerarPDFInstrumento(instrumento, clausulas, empresa, operacao, s
     for (const c of items) {
       if (y > 265) { doc.addPage(); y = 20 }
 
-      // Número e título
+      // Fundo cinza claro para cabeçalho da cláusula
       doc.setFillColor(245, 247, 250)
-      doc.rect(10, y - 1, 190, 8, 'F')
+      const tituloCompleto = c.numero ? c.numero + ' — ' + c.titulo : (c.titulo || '')
+      const tituloLines = doc.splitTextToSize(tituloCompleto, 182)
+      doc.rect(10, y - 1, 190, tituloLines.length * 4.5 + 4, 'F')
       doc.setFontSize(9)
       doc.setFont('helvetica', 'bold')
       doc.setTextColor(30, 30, 30)
-      const tituloCompleto = c.numero ? `${c.numero} — ${c.titulo}` : c.titulo
-      const tituloLines = doc.splitTextToSize(tituloCompleto, 170)
-      doc.text(tituloLines, 14, y + 4)
-      y += tituloLines.length * 4.5 + 3
+      doc.text(tituloLines, 14, y + 3)
+      y += tituloLines.length * 4.5 + 4
 
       // Valores monetários e percentual
       if (c.valor_monetario || c.percentual) {
-        if (y > 270) { doc.addPage(); y = 20 }
+        if (y > 275) { doc.addPage(); y = 20 }
         doc.setFont('helvetica', 'italic')
         doc.setFontSize(8)
         doc.setTextColor(20, 120, 60)
         const extras = [
-          c.valor_monetario ? `💰 ${c.valor_monetario}` : '',
-          c.percentual ? `📊 ${c.percentual}` : ''
-        ].filter(Boolean).join('   ')
+          c.valor_monetario ? 'Valor: ' + c.valor_monetario : '',
+          c.percentual ? 'Percentual: ' + c.percentual : ''
+        ].filter(Boolean).join('   |   ')
         doc.text(extras, 14, y)
         y += 5
       }
 
       // Vigência específica
       if (c.vigencia_especifica) {
-        if (y > 270) { doc.addPage(); y = 20 }
+        if (y > 275) { doc.addPage(); y = 20 }
         doc.setFont('helvetica', 'italic')
         doc.setFontSize(8)
         doc.setTextColor(180, 100, 0)
-        doc.text(`⚠️ Vigência específica: ${c.vigencia_especifica}`, 14, y)
-        y += 5
+        const vegLines = doc.splitTextToSize('Vigencia especifica: ' + c.vigencia_especifica, 182)
+        doc.text(vegLines, 14, y)
+        y += vegLines.length * 4 + 2
       }
 
-      // Observações/Contextualização
-      if (c.observacoes) {
-        if (y > 270) { doc.addPage(); y = 20 }
+      // Observações
+      if (c.observacoes && c.observacoes.trim()) {
+        if (y > 275) { doc.addPage(); y = 20 }
         doc.setFontSize(8)
         doc.setFont('helvetica', 'italic')
         doc.setTextColor(30, 80, 180)
-        const obsLines = doc.splitTextToSize(`💡 ${c.observacoes}`, 182)
+        const obsLines = doc.splitTextToSize('Obs: ' + c.observacoes, 182)
         doc.text(obsLines, 14, y)
         y += obsLines.length * 4 + 2
       }
 
-      // Conteúdo INTEGRAL
+      // CONTEÚDO INTEGRAL — sem cortes
       doc.setFont('helvetica', 'normal')
       doc.setFontSize(8.5)
       doc.setTextColor(50, 50, 50)
-      const conteudoLines = doc.splitTextToSize(c.conteudo || '', 182)
+      const conteudo = c.conteudo || ''
+      const conteudoLines = doc.splitTextToSize(conteudo, 182)
       for (const line of conteudoLines) {
-        if (y > 278) { doc.addPage(); y = 20 }
+        if (y > 280) { doc.addPage(); y = 20 }
         doc.text(line, 14, y)
         y += 4.2
       }
 
       // Tags
       if ((c.tags || []).length > 0) {
-        if (y > 275) { doc.addPage(); y = 20 }
+        if (y > 278) { doc.addPage(); y = 20 }
         doc.setFontSize(7.5)
         doc.setFont('helvetica', 'bold')
         doc.setTextColor(100, 100, 100)
@@ -193,8 +170,9 @@ export function gerarPDFInstrumento(instrumento, clausulas, empresa, operacao, s
       }
 
       y += 5
-      // Linha divisória entre cláusulas
-      if (y < 278) {
+
+      // Linha divisória
+      if (y < 280) {
         doc.setDrawColor(220, 220, 220)
         doc.line(14, y - 2, 196, y - 2)
       }
@@ -203,7 +181,7 @@ export function gerarPDFInstrumento(instrumento, clausulas, empresa, operacao, s
   }
 
   addFooter(doc)
-  doc.save(`${instrumento?.nome || 'instrumento'}.pdf`)
+  doc.save((instrumento?.nome || 'instrumento') + '.pdf')
 }
 
 export function gerarPDFComparativo(resultado, instrumentoA, instrumentoB) {
@@ -211,48 +189,37 @@ export function gerarPDFComparativo(resultado, instrumentoA, instrumentoB) {
 
   addHeader(
     doc,
-    `Comparativo: ${instrumentoA?.nome} vs ${instrumentoB?.nome}`,
-    `Gerado em ${new Date().toLocaleDateString('pt-BR')}`
+    'Comparativo: ' + instrumentoA?.nome + ' vs ' + instrumentoB?.nome,
+    'Gerado em ' + new Date().toLocaleDateString('pt-BR')
   )
 
-  const rows = resultado.map(r => [
-    r.status.label,
-    r.clausulaA?.numero || '',
-    r.clausulaA?.titulo || '',
-    (r.clausulaA?.conteudo || '').slice(0, 300),
-    r.clausulaB?.numero || '',
-    r.clausulaB?.titulo || '',
-    (r.clausulaB?.conteudo || '').slice(0, 300),
-  ])
-
   const STATUS_COLORS = {
-    'INALTERADA': [209, 250, 229],
-    'ALTERADA': [219, 234, 254],
-    'MUITO ALTERADA': [254, 243, 199],
-    'SUBSTITUÍDA': [254, 226, 226],
-    'SUPRIMIDA': [241, 245, 249],
-    'NOVA': [243, 232, 255],
+    'INALTERADA': [209, 250, 229], 'ALTERADA': [219, 234, 254],
+    'MUITO ALTERADA': [254, 243, 199], 'SUBSTITUÍDA': [254, 226, 226],
+    'SUPRIMIDA': [241, 245, 249], 'NOVA': [243, 232, 255],
   }
 
   doc.autoTable({
     startY: 36,
-    head: [['Status', 'Nº A', 'Título A', 'Conteúdo A', 'Nº B', 'Título B', 'Conteúdo B']],
-    body: rows,
+    head: [['Status', 'Nr A', 'Titulo A', 'Conteudo A', 'Nr B', 'Titulo B', 'Conteudo B']],
+    body: resultado.map(r => [
+      r.status.label,
+      r.clausulaA?.numero || '',
+      r.clausulaA?.titulo || '',
+      (r.clausulaA?.conteudo || '').slice(0, 400),
+      r.clausulaB?.numero || '',
+      r.clausulaB?.titulo || '',
+      (r.clausulaB?.conteudo || '').slice(0, 400),
+    ]),
     styles: { fontSize: 6.5, cellPadding: 1.5, overflow: 'linebreak' },
     headStyles: { fillColor: [26, 79, 255], textColor: 255, fontStyle: 'bold', fontSize: 7 },
     columnStyles: {
-      0: { cellWidth: 24 },
-      1: { cellWidth: 12 },
-      2: { cellWidth: 38 },
-      3: { cellWidth: 66 },
-      4: { cellWidth: 12 },
-      5: { cellWidth: 38 },
-      6: { cellWidth: 66 },
+      0: { cellWidth: 24 }, 1: { cellWidth: 12 }, 2: { cellWidth: 38 },
+      3: { cellWidth: 66 }, 4: { cellWidth: 12 }, 5: { cellWidth: 38 }, 6: { cellWidth: 66 },
     },
     didParseCell: (data) => {
       if (data.section === 'body' && data.column.index === 0) {
-        const status = data.cell.raw
-        data.cell.styles.fillColor = STATUS_COLORS[status] || [255, 255, 255]
+        data.cell.styles.fillColor = STATUS_COLORS[data.cell.raw] || [255, 255, 255]
         data.cell.styles.fontStyle = 'bold'
       }
     }
@@ -263,9 +230,9 @@ export function gerarPDFComparativo(resultado, instrumentoA, instrumentoB) {
     doc.setPage(i)
     doc.setFontSize(7)
     doc.setTextColor(160, 160, 160)
-    doc.text(`Gerado em ${new Date().toLocaleDateString('pt-BR')} — Motor CCT`, 14, 205)
-    doc.text(`Página ${i} de ${pageCount}`, 283, 205, { align: 'right' })
+    doc.text('Gerado em ' + new Date().toLocaleDateString('pt-BR') + ' — Motor CCT', 14, 205)
+    doc.text('Pagina ' + i + ' de ' + pageCount, 283, 205, { align: 'right' })
   }
 
-  doc.save(`comparativo_${instrumentoA?.nome}_vs_${instrumentoB?.nome}.pdf`)
+  doc.save('comparativo_' + instrumentoA?.nome + '_vs_' + instrumentoB?.nome + '.pdf')
 }
