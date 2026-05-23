@@ -41,7 +41,9 @@ export default function Relatorios() {
       supabase.from('empresas').select('id,razao_social').eq('user_id', user.id).order('razao_social'),
       supabase.from('operacoes').select('id,nome,codigo').eq('user_id', user.id).order('nome'),
       supabase.from('sindicatos').select('id,razao_social,sigla,tipo').eq('user_id', user.id).order('razao_social'),
-      supabase.from('instrumentos').select('id,nome,tipo,vigencia_fim,vigencia_inicio,empresa_id,operacao_id,sindicato_laboral_id,sindicato_patronal_id')
+      // Busca TODOS os campos necessários incluindo vigencia_fim e vigencia_inicio
+      supabase.from('instrumentos')
+        .select('id,nome,tipo,vigencia_inicio,vigencia_fim,empresa_id,operacao_id,sindicato_laboral_id,sindicato_patronal_id')
         .eq('user_id', user.id).eq('status_processamento', 'processado').order('nome'),
     ]).then(([{ data: e }, { data: o }, { data: s }, { data: i }]) => {
       setTodasEmpresas(e || [])
@@ -52,8 +54,8 @@ export default function Relatorios() {
   }, [user])
 
   const subcatsDisponiveis = filtros.categorias.length > 0
-    ? filtros.categorias.flatMap(cat => (CATEGORIAS[cat] || []).map(s => ({ value: s, label: s })))
-    : Object.values(CATEGORIAS).flat().map(s => ({ value: s, label: s }))
+    ? [...new Set(filtros.categorias.flatMap(cat => CATEGORIAS[cat] || []))].map(s => ({ value: s, label: s }))
+    : [...new Set(Object.values(CATEGORIAS).flat())].map(s => ({ value: s, label: s }))
 
   function filtrarInstrumentos() {
     let insts = [...todosInstrumentos]
@@ -168,29 +170,24 @@ export default function Relatorios() {
       <div className="grid grid-cols-1 gap-6">
         <div className="card p-5">
           <h2 className="font-display font-semibold text-slate-700 mb-1">🔍 Filtros do Relatório</h2>
-          <p className="text-xs text-slate-400 mb-4">Deixe em branco para incluir todos. Use Ctrl+clique para selecionar vários itens em cada filtro.</p>
+          <p className="text-xs text-slate-400 mb-4">Deixe em branco para incluir todos. Use Ctrl+clique para selecionar vários itens.</p>
 
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
             <MultiSelect label="Empresa(s)"
               options={todasEmpresas.map(e => ({ value: e.id, label: e.razao_social }))}
               value={filtros.empresas} onChange={v => setFiltros({ ...filtros, empresas: v })} />
-
             <MultiSelect label="Operação(ões)"
               options={todasOperacoes.map(o => ({ value: o.id, label: o.nome + (o.codigo ? ' (' + o.codigo + ')' : '') }))}
               value={filtros.operacoes} onChange={v => setFiltros({ ...filtros, operacoes: v })} />
-
             <MultiSelect label="Sindicato(s) Laboral(is)"
               options={laboral.map(s => ({ value: s.id, label: (s.sigla ? s.sigla + ' — ' : '') + s.razao_social }))}
               value={filtros.sindicatosLab} onChange={v => setFiltros({ ...filtros, sindicatosLab: v })} />
-
             <MultiSelect label="Sindicato(s) Patronal(is)"
               options={patronal.map(s => ({ value: s.id, label: (s.sigla ? s.sigla + ' — ' : '') + s.razao_social }))}
               value={filtros.sindicatosPat} onChange={v => setFiltros({ ...filtros, sindicatosPat: v })} />
-
             <MultiSelect label="Instrumento(s) Coletivo(s)"
               options={todosInstrumentos.map(i => ({ value: i.id, label: i.tipo + ' — ' + i.nome }))}
               value={filtros.instrumentos} onChange={v => setFiltros({ ...filtros, instrumentos: v })} />
-
             <div>
               <label className="label">Vigência</label>
               <select className="input" value={filtros.vigencia} onChange={e => setFiltros({ ...filtros, vigencia: e.target.value })}>
@@ -201,17 +198,14 @@ export default function Relatorios() {
                 <option value="ultimo_vigente">Último por operação (vigente ou mais recente)</option>
               </select>
             </div>
-
             <MultiSelect label="Categoria(s)"
               options={Object.keys(CATEGORIAS).map(c => ({ value: c, label: c }))}
               value={filtros.categorias} onChange={v => setFiltros({ ...filtros, categorias: v, subcategorias: [] })} />
-
             <MultiSelect label="Subcategoria(s)"
-              options={subcatsDisponiveis.filter((o, i, arr) => arr.findIndex(x => x.value === o.value) === i)}
+              options={[...new Map(subcatsDisponiveis.map(o => [o.value, o])).values()]}
               value={filtros.subcategorias} onChange={v => setFiltros({ ...filtros, subcategorias: v })} />
           </div>
 
-          {/* Preview */}
           <div className="bg-surface-50 rounded-lg p-3 mb-4 flex items-center justify-between flex-wrap gap-2">
             <div>
               <p className="text-sm font-medium text-slate-700">
@@ -224,9 +218,7 @@ export default function Relatorios() {
                 </p>
               )}
             </div>
-            <button className="btn-secondary text-xs py-1" onClick={calcularPreview}>
-              Calcular prévia
-            </button>
+            <button className="btn-secondary text-xs py-1" onClick={calcularPreview}>Calcular prévia</button>
           </div>
 
           <div className="flex gap-3 flex-wrap">
@@ -239,14 +231,8 @@ export default function Relatorios() {
             <button className="btn-secondary text-slate-400" onClick={() => {
               setFiltros({ empresas: [], operacoes: [], sindicatosLab: [], sindicatosPat: [], categorias: [], subcategorias: [], instrumentos: [], vigencia: '' })
               setPreview(null)
-            }}>
-              Limpar filtros
-            </button>
+            }}>Limpar filtros</button>
           </div>
-
-          {instsPreview.length === 0 && todosInstrumentos.length === 0 && (
-            <p className="text-xs text-amber-600 mt-3">⚠️ Nenhum instrumento processado encontrado.</p>
-          )}
         </div>
 
         <div className="card p-5 border-2 border-dashed border-slate-200">

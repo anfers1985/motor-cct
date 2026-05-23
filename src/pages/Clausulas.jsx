@@ -9,6 +9,7 @@ export default function Clausulas() {
   const { user } = useAuth()
   const [instrumentos, setInstrumentos] = useState([])
   const [clausulas, setClausulas] = useState([])
+  const [subcatsDisponiveis, setSubcatsDisponiveis] = useState([])
   const [filtros, setFiltros] = useState({ instrumento: '', categoria: '', subcategoria: '', busca: '' })
   const [expandido, setExpandido] = useState(null)
   const [loading, setLoading] = useState(false)
@@ -19,6 +20,23 @@ export default function Clausulas() {
       .eq('user_id', user.id).eq('status_processamento', 'processado').order('nome')
       .then(({ data }) => setInstrumentos(data || []))
   }, [user])
+
+  // Quando mudar o instrumento ou categoria, buscar subcategorias reais do banco
+  useEffect(() => {
+    if (!filtros.instrumento) { setClausulas([]); setSubcatsDisponiveis([]); return }
+    if (!filtros.categoria) { setSubcatsDisponiveis([]); return }
+
+    // Busca subcategorias reais que existem no instrumento selecionado
+    supabase.from('clausulas')
+      .select('subcategoria')
+      .eq('instrumento_id', filtros.instrumento)
+      .eq('user_id', user.id)
+      .eq('categoria', filtros.categoria)
+      .then(({ data }) => {
+        const unicas = [...new Set((data || []).map(c => c.subcategoria).filter(Boolean))].sort()
+        setSubcatsDisponiveis(unicas)
+      })
+  }, [filtros.instrumento, filtros.categoria])
 
   useEffect(() => {
     if (!filtros.instrumento) { setClausulas([]); return }
@@ -41,8 +59,6 @@ export default function Clausulas() {
     setClausulas(cs => cs.map(c => c.id === clausula.id ? { ...c, tags: novo } : c))
   }
 
-  const subcats = filtros.categoria ? (CATEGORIAS[filtros.categoria] || []) : []
-
   return (
     <div>
       <div className="mb-6">
@@ -63,18 +79,24 @@ export default function Clausulas() {
           <div>
             <label className="label">Categoria</label>
             <select className="input" value={filtros.categoria}
-              onChange={e => setFiltros({ ...filtros, categoria: e.target.value, subcategoria: '' })}>
+              onChange={e => setFiltros({ ...filtros, categoria: e.target.value, subcategoria: '' })}
+              disabled={!filtros.instrumento}>
               <option value="">Todas</option>
               {Object.keys(CATEGORIAS).map(c => <option key={c}>{c}</option>)}
             </select>
           </div>
           <div>
-            <label className="label">Subcategoria</label>
+            <label className="label">
+              Subcategoria
+              {filtros.categoria && subcatsDisponiveis.length === 0 && (
+                <span className="text-slate-400 font-normal ml-1">(nenhuma nesta categoria)</span>
+              )}
+            </label>
             <select className="input" value={filtros.subcategoria}
               onChange={e => setFiltros({ ...filtros, subcategoria: e.target.value })}
-              disabled={!filtros.categoria}>
+              disabled={!filtros.categoria || subcatsDisponiveis.length === 0}>
               <option value="">Todas</option>
-              {subcats.map(s => <option key={s}>{s}</option>)}
+              {subcatsDisponiveis.map(s => <option key={s}>{s}</option>)}
             </select>
           </div>
           <div>
@@ -162,7 +184,6 @@ export default function Clausulas() {
                       </p>
                     )}
                     <p className="text-sm text-slate-700 leading-relaxed whitespace-pre-wrap">{c.conteudo}</p>
-
                     <div className="mt-4 pt-3 border-t border-slate-100">
                       <p className="text-xs font-medium text-slate-400 mb-2">Etiquetas:</p>
                       <div className="flex gap-2 flex-wrap">
