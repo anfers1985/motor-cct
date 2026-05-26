@@ -1,4 +1,4 @@
-// Roteador de provedores de IA
+// Roteador de provedores de IA — Motor CCT
 export const PROVEDORES = {
   gemini: { label: 'Google Gemini', modelo_padrao: 'gemini-2.0-flash', suporta_pdf_nativo: true },
   claude: { label: 'Anthropic Claude', modelo_padrao: 'claude-haiku-4-5', suporta_pdf_nativo: true },
@@ -21,53 +21,35 @@ export function saveAIConfig(config) {
   localStorage.setItem('motor_cct_ai_config', JSON.stringify(config))
 }
 
-const PROMPT_BASE = (texto) => `Você é especialista em direito do trabalho brasileiro com profundo conhecimento em Convenções Coletivas de Trabalho (CCT) e Acordos Coletivos de Trabalho (ACT).
+const PROMPT_BASE = (texto) => `Você é especialista em direito do trabalho brasileiro com profundo conhecimento em CCT e ACT.
 
-TAREFA: Extraia TODAS as cláusulas do instrumento coletivo abaixo, seguindo rigorosamente as instruções.
+TAREFA: Extraia TODAS as cláusulas do trecho de instrumento coletivo abaixo.
 
-INSTRUÇÕES CRÍTICAS:
+REGRAS OBRIGATÓRIAS:
 
-1. IDENTIFICAÇÃO DE CLÁUSULAS:
-   - Cláusulas são identificadas por "CLÁUSULA PRIMEIRA", "CLÁUSULA SEGUNDA", "CLÁUSULA TERCEIRA"... até "CLÁUSULA CENTÉSIMA" ou mais
-   - Também aceite numeração ordinal sem a palavra "CLÁUSULA": PRIMEIRA, SEGUNDA, TERCEIRA, etc.
-   - NÃO confunda ARTIGOS de adendos/regulamentos (numerados em algarismos arábicos: Art. 1°, Art. 2°, Artigo 1, 1., 2.) com CLÁUSULAS da CCT/ACT
-   - Se o documento contiver múltiplos instrumentos (ex: CCT principal + Adendo de Comissão de Conciliação), extraia as cláusulas de TODOS os instrumentos, identificando cada uma corretamente
-   - Parágrafos (§1º, §2º, §3º, etc.) NÃO são cláusulas — são parte do conteúdo da cláusula que os contém
+1. IDENTIFICAR CLÁUSULAS:
+   - Cláusulas são identificadas por "CLÁUSULA PRIMEIRA", "CLÁUSULA SEGUNDA" ... "CLÁUSULA SEXAGÉSIMA QUINTA" etc.
+   - Também "CLÁUSULA 1a", "CLÁUSULA 2a" (do adendo CCP) são cláusulas válidas
+   - Parágrafos (§1º, §2º) e incisos (I, II, III) NÃO são cláusulas separadas — são parte do conteúdo da cláusula
 
-2. CONTEÚDO INTEGRAL:
-   - O campo "conteudo" deve conter o texto COMPLETO da cláusula, incluindo todos os parágrafos (§), incisos (I, II, III), alíneas (a, b, c) e tabelas que façam parte dela
-   - NUNCA resuma, abrevie ou corte o conteúdo
-   - Inclua tabelas como texto estruturado (ex: "CARGO | SALÁRIO\\nAuxiliar | R$ 1.664,62")
+2. CONTEÚDO INTEGRAL OBRIGATÓRIO:
+   - Copie o texto COMPLETO de cada cláusula, incluindo todos os §§, incisos, alíneas e tabelas
+   - NUNCA resuma, nunca abrevie, nunca corte
+   - Se houver tabela de salários/valores, inclua como texto: "CARGO | VALOR\nAuxiliar | R$ 1.664,62"
 
-3. NUMERAÇÃO:
-   - Use o número ordinal exato como aparece no documento: "PRIMEIRA", "DÉCIMA SEGUNDA", "QUADRAGÉSIMA TERCEIRA", etc.
-   - Se a cláusula não tiver número explícito, use "Não numerada"
+3. NUMERAÇÃO: use o ordinal exato: "PRIMEIRA", "DÉCIMA SEGUNDA", "1a", "2a" etc.
 
-4. CLASSIFICAÇÃO (use EXATAMENTE uma das 11 categorias):
-   - Remuneração: pisos, reajustes, PLR, adiantamentos, horas extras, prêmios, adicional noturno, insalubridade/periculosidade quando monetária
-   - Jornada de Trabalho: banco de horas, escalas, intervalos, controle de jornada, horas extras (regras), sobreaviso, jornada reduzida
-   - Benefícios: alimentação, transporte, saúde, odontológico, farmácia, auxílio filho excepcional, auxílio funeral, PAT, pernoite
-   - Saúde e Segurança: EPI, CIPA, atestados médicos, condições de trabalho, ergonomia, uniformes
-   - Estabilidade e Garantias: gestante, acidentado, pré-aposentadoria, dirigente sindical, CIPEIRO
-   - FGTS e Rescisão: verbas rescisórias, homologação, dispensa coletiva, justa causa, carta de referência, contrato de experiência
-   - Relações Sindicais: contribuições sindicais, liberação sindical, quadro de avisos, comissão de conciliação, mensalidades, compromissos sindicais
-   - Penalidades: multas por descumprimento
-   - Capacitação: treinamento, qualificação, educação
-   - Igualdade e Diversidade: gênero, raça, PCD, união homoafetiva
-   - Disposições Gerais: vigência, abrangência, documentos admissionais, arquivos eletrônicos, condições gerais
+4. CATEGORIAS (use exatamente uma):
+   Remuneração | Jornada de Trabalho | Benefícios | Saúde e Segurança | Estabilidade e Garantias | FGTS e Rescisão | Relações Sindicais | Penalidades | Capacitação | Igualdade e Diversidade | Disposições Gerais
 
-5. CAMPOS ESPECIAIS:
-   - "valor_monetario": extraia TODOS os valores em R$ mencionados (ex: "R$ 1.664,62; R$ 2.336,97")
-   - "percentual": extraia percentuais (ex: "6%", "40%", "50%")
-   - "observacoes": escreva uma observação prática de 1-2 frases explicando o impacto/contexto da cláusula para o empregador (ex: "Reajuste obrigatório de 6% para salários até R$5.000. Verificar se já foram concedidas antecipações compensáveis.")
+5. SUBCATEGORIA: use uma subcategoria específica e descritiva (ex: "Piso Salarial", "PLR", "Horas Extras", "CIPA")
 
-6. FORMATO DE SAÍDA:
-   - Retorne SOMENTE um array JSON válido
-   - Sem texto antes ou depois, sem markdown, sem crases
-   - Comece diretamente com [ e termine com ]
-   - Cada objeto deve ter: numero, titulo, conteudo, categoria, subcategoria, valor_monetario, percentual, vigencia_especifica, observacoes
+6. OBSERVAÇÕES: escreva 1-2 frases sobre o impacto prático para o empregador/RH
 
-DOCUMENTO:
+7. SAÍDA: array JSON válido apenas. Sem markdown, sem texto antes ou depois.
+   Campos: numero, titulo, conteudo, categoria, subcategoria, valor_monetario, percentual, vigencia_especifica, observacoes
+
+TRECHO DO DOCUMENTO:
 ${texto}`
 
 function parseJSON(raw) {
@@ -94,6 +76,33 @@ function parseJSON(raw) {
   }
 }
 
+// Pré-processa o texto inserindo quebras antes de cada CLÁUSULA
+function preProcessarTexto(texto) {
+  return texto.replace(
+    /(CLÁUSULA\s+(?:[A-ZÁÉÍÓÚÃÕÂÊÔÀÇ\d]+(?:[aº°]|\s+[A-ZÁÉÍÓÚÃÕÂÊÔÀÇ]+)*\s*[-–—]))/g,
+    '\n\n$1'
+  ).trim()
+}
+
+// Divide o texto em chunks respeitando as bordas das cláusulas
+function dividirEmChunks(texto, maxChars = 12000) {
+  const processado = preProcessarTexto(texto)
+  // Divide no início de cada CLÁUSULA
+  const blocos = processado.split(/(?=\n\nCLÁUSULA\s+)/)
+  const chunks = []
+  let chunkAtual = ''
+  for (const bloco of blocos) {
+    if (chunkAtual.length + bloco.length > maxChars && chunkAtual.length > 0) {
+      chunks.push(chunkAtual.trim())
+      chunkAtual = bloco
+    } else {
+      chunkAtual += bloco
+    }
+  }
+  if (chunkAtual.trim()) chunks.push(chunkAtual.trim())
+  return chunks
+}
+
 async function geminiCall(url, texto) {
   const body = {
     contents: [{ parts: [{ text: PROMPT_BASE(texto) }] }],
@@ -114,33 +123,25 @@ async function geminiCall(url, texto) {
 async function callGemini(config, texto) {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${config.modelo}:generateContent?key=${config.chave}`
 
-  if (texto.length <= 20000) {
-    return await geminiCall(url, texto)
+  // Se o texto for pequeno, processa direto
+  if (texto.length <= 12000) {
+    return await geminiCall(url, preProcessarTexto(texto))
   }
 
-  // Divide em chunks respeitando quebras de cláusula
-  const MAX_CHARS = 8000
-  const paragrafos = texto.split(/\n+/)
-  const chunks = []
-  let chunk = ''
-  for (const p of paragrafos) {
-    if ((chunk + '\n' + p).length > MAX_CHARS && chunk.length > 0) {
-      chunks.push(chunk.trim())
-      chunk = p
-    } else {
-      chunk += '\n' + p
-    }
-  }
-  if (chunk.trim()) chunks.push(chunk.trim())
+  // Divide em chunks respeitando bordas de cláusulas
+  const chunks = dividirEmChunks(texto)
+  console.log(`Dividindo em ${chunks.length} chunks...`)
 
   let todas = []
   for (let i = 0; i < chunks.length; i++) {
-    console.log(`Processando chunk ${i + 1} de ${chunks.length}...`)
+    console.log(`Processando chunk ${i + 1} de ${chunks.length} (${chunks[i].length} chars)...`)
     try {
       const raw = await geminiCall(url, chunks[i])
       const clausulas = parseJSON(raw)
+      console.log(`  Chunk ${i + 1}: ${clausulas.length} cláusulas extraídas`)
       todas = todas.concat(clausulas)
-      if (i < chunks.length - 1) await new Promise(r => setTimeout(r, 1000))
+      // Pausa entre chunks para não exceder rate limit
+      if (i < chunks.length - 1) await new Promise(r => setTimeout(r, 2000))
     } catch(e) {
       console.warn(`Chunk ${i + 1} falhou:`, e.message)
     }
@@ -161,10 +162,10 @@ async function callClaude(config, texto, isPDF, pdfBase64) {
   if (isPDF && pdfBase64) {
     content = [
       { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: pdfBase64 } },
-      { type: 'text', text: PROMPT_BASE('(Ver documento PDF anexo acima)') }
+      { type: 'text', text: PROMPT_BASE('(Ver documento PDF anexo acima — extraia TODAS as cláusulas com conteúdo integral)') }
     ]
   } else {
-    content = PROMPT_BASE(texto)
+    content = PROMPT_BASE(preProcessarTexto(texto))
   }
   const body = { model: config.modelo, max_tokens: 8192, messages: [{ role: 'user', content }] }
   const res = await fetch('https://api.anthropic.com/v1/messages', {
@@ -181,7 +182,7 @@ async function callOpenAICompat(config, texto, endpoint) {
     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${config.chave}` },
     body: JSON.stringify({
       model: config.modelo,
-      messages: [{ role: 'user', content: PROMPT_BASE(texto) }],
+      messages: [{ role: 'user', content: PROMPT_BASE(preProcessarTexto(texto)) }],
       temperature: 0.1,
       max_tokens: 8192,
     })
@@ -195,7 +196,7 @@ async function callCohere(config, texto) {
   const res = await fetch('https://api.cohere.ai/v1/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${config.chave}` },
-    body: JSON.stringify({ model: config.modelo, message: PROMPT_BASE(texto), temperature: 0.1 })
+    body: JSON.stringify({ model: config.modelo, message: PROMPT_BASE(preProcessarTexto(texto)), temperature: 0.1 })
   })
   if (!res.ok) throw new Error(`Cohere ${res.status}: ${await res.text()}`)
   const data = await res.json()

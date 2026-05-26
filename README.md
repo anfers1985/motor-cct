@@ -1,317 +1,304 @@
-# ⚖️ Motor CCT — Guia de Instalação Completo
+# ⚖️ Motor CCT — Gestão de Normas Coletivas
+**Versão 1.3 — Maio 2026**
 
-> Sistema de Gestão de Normas Coletivas (ACT/CCT)  
-> Por Anderson — OAB/SC 44.858
-
----
-
-## O QUE VOCÊ VAI PRECISAR FAZER (visão geral)
-
-1. Criar conta no GitHub
-2. Criar conta no Supabase
-3. Criar o repositório no GitHub e subir o código
-4. Configurar o banco de dados (colar um SQL)
-5. Configurar o login com GitHub no Supabase
-6. Configurar as variáveis de ambiente no GitHub
-7. Ativar o GitHub Pages
-8. Pronto — acessar e usar
-
-**Tempo estimado: 30 a 45 minutos**
+Sistema web completo para gestão e análise de CCTs/ACTs com extração de cláusulas por IA.
 
 ---
 
-## ETAPA 1 — INSTALAR FERRAMENTAS NO SEU COMPUTADOR
+## 🌐 ACESSO
 
-### 1.1 — Instalar o Node.js
-
-1. Abra o navegador e vá para: **https://nodejs.org**
-2. Clique no botão verde escrito **"LTS"** (a versão estável)
-3. Clique em **Download** e espere baixar
-4. Abra o arquivo baixado e clique em **Next** em todas as telas, depois **Install**
-5. Aguarde finalizar e clique em **Finish**
-
-### 1.2 — Instalar o Git
-
-1. Vá para: **https://git-scm.com/download/win** (Windows) ou **https://git-scm.com/download/mac** (Mac)
-2. Baixe e instale com as opções padrão (clicando Next em tudo)
-
-### 1.3 — Verificar se funcionou
-
-1. Pressione **Windows + R**, digite `cmd` e pressione Enter (Windows)  
-   _No Mac: abra o Terminal (Cmd + Espaço, digite "Terminal")_
-2. Digite `node -v` e pressione Enter — deve aparecer algo como `v20.x.x`
-3. Digite `git -v` e pressione Enter — deve aparecer algo como `git version 2.x.x`
-
-Se aparecer esses números, está tudo certo. Continue.
+**Site:** https://anfers1985.github.io/motor-cct/
+**Repositório:** https://github.com/anfers1985/motor-cct
+**Supabase:** https://supabase.com/dashboard/project/uioctuzoxkvmpmhbfice
 
 ---
 
-## ETAPA 2 — CRIAR CONTA NO GITHUB
+## 🏗️ ARQUITETURA
 
-1. Vá para: **https://github.com**
-2. Clique em **Sign up** (canto superior direito)
-3. Siga os passos para criar a conta com seu e-mail
-4. **Guarde o nome de usuário** — você vai precisar dele depois (ex: `andersonadvogado`)
+| Componente | Tecnologia | Custo |
+|---|---|---|
+| Frontend | React 18 + Vite + Tailwind CSS | Gratuito |
+| Banco de dados | Supabase (PostgreSQL) | Gratuito até 500MB |
+| Autenticação | GitHub OAuth via Supabase | Gratuito |
+| Storage de arquivos | Supabase Storage | Gratuito até 1GB |
+| Deploy | GitHub Pages via Actions | Gratuito |
+| IA | Multi-provedor (chave do usuário) | Gratuito com chave própria |
 
----
-
-## ETAPA 3 — CRIAR O REPOSITÓRIO NO GITHUB
-
-1. Após fazer login no GitHub, clique no botão verde **"New"** (ou acesse https://github.com/new)
-2. Em **Repository name**, digite: `motor-cct`
-3. Deixe marcado **Public**
-4. **NÃO** marque "Add a README file"
-5. Clique em **Create repository**
-6. Deixe essa página aberta — você vai voltar aqui
+**IMPORTANTE:** Usa `HashRouter` (não BrowserRouter) — obrigatório para GitHub Pages.
 
 ---
 
-## ETAPA 4 — SUBIR O CÓDIGO PARA O GITHUB
-
-### 4.1 — Descompactar o projeto
-
-1. Você recebeu (ou vai receber) uma pasta chamada `motor-cct` com todos os arquivos
-2. Coloque essa pasta em um lugar fácil, como `C:\Projetos\motor-cct` (Windows) ou `~/Projetos/motor-cct` (Mac)
-
-### 4.2 — Abrir o terminal na pasta do projeto
-
-**Windows:**
-1. Abra o Explorador de Arquivos
-2. Navegue até a pasta `motor-cct`
-3. Clique na barra de endereço (onde está escrito o caminho), digite `cmd` e pressione Enter
-
-**Mac:**
-1. Abra o Terminal
-2. Digite `cd ` (com espaço no final), depois arraste a pasta `motor-cct` para o terminal e pressione Enter
-
-### 4.3 — Inicializar e subir o código
-
-No terminal, copie e cole **linha por linha**, pressionando Enter após cada uma:
+## 📁 ESTRUTURA DE PASTAS
 
 ```
-git init
+motor-cct/
+├── public/
+│   └── 404.html                    ← Necessário para HashRouter no GitHub Pages
+├── src/
+│   ├── components/
+│   │   ├── Layout/
+│   │   │   ├── Sidebar.jsx
+│   │   │   └── Layout.jsx
+│   │   └── UI/
+│   │       ├── Modal.jsx
+│   │       └── Badge.jsx
+│   ├── pages/
+│   │   ├── Dashboard.jsx
+│   │   ├── Sindicatos.jsx
+│   │   ├── Empresas.jsx
+│   │   ├── Instrumentos.jsx
+│   │   ├── Clausulas.jsx           ← Subcategorias buscadas do banco em tempo real
+│   │   ├── Comparativo.jsx         ← Diff visual palavra a palavra (roxo/verde)
+│   │   ├── Relatorios.jsx          ← Filtros múltiplos: empresa, operação, sindicato, etc.
+│   │   ├── Configuracoes.jsx
+│   │   └── Login.jsx
+│   ├── services/
+│   │   ├── supabase.js
+│   │   ├── ai/
+│   │   │   └── index.js            ← Roteador multi-provedor + chunking inteligente
+│   │   ├── extractors/
+│   │   │   ├── pdf.js
+│   │   │   ├── docx.js             ← Pré-processa CLÁUSULAS antes do chunking
+│   │   │   └── excel.js
+│   │   └── reports/
+│   │       ├── excelReport.js      ← Excel com conteúdo integral, status vigência
+│   │       └── pdfReport.js        ← PDF com conteúdo integral, ordenação correta
+│   ├── hooks/
+│   │   └── useAuth.js              ← Processa token OAuth do HashRouter
+│   └── utils/
+│       ├── categorias.js
+│       ├── comparacao.js           ← Algoritmo Jaccard de similaridade
+│       ├── formatters.js
+│       └── ordenacao.js            ← Ordinais em português até 200 + romanos + arábicos
+├── .github/workflows/deploy.yml   ← Deploy automático no GitHub Pages
+├── package.json                    ← type: "module" incluído
+├── package-lock.json
+├── vite.config.js
+├── tailwind.config.js
+└── supabase_setup.sql             ← SQL para criar tabelas + RLS + Storage
+```
+
+---
+
+## 🗄️ BANCO DE DADOS (Supabase)
+
+### Tabelas
+```
+sindicatos    → tipo, razao_social, sigla, cnpj, estado, municipio, base_territorial, categoria, federacao, confederacao
+empresas      → razao_social, nome_fantasia, cnpj, estado, municipio
+operacoes     → empresa_id, nome, codigo, estado, municipio, sindicato_laboral_id, sindicato_patronal_id
+instrumentos  → tipo, nome, empresa_id, operacao_id, sindicato_laboral_id, sindicato_patronal_id,
+                vigencia_inicio, vigencia_fim, arquivo_url, arquivo_nome, status_processamento
+clausulas     → instrumento_id, numero, titulo, conteudo, categoria, subcategoria,
+                valor_monetario, percentual, vigencia_especifica, observacoes, tags[]
+```
+
+Todas as tabelas têm **Row Level Security** — cada usuário vê apenas seus próprios dados.
+
+### Storage
+- Bucket: `instrumentos` (público)
+- Caminho dos arquivos: `{user_id}/{timestamp}.{ext}`
+
+---
+
+## 🤖 PROVEDORES DE IA SUPORTADOS
+
+| Provedor | Modelo padrão | Limite gratuito | Observação |
+|---|---|---|---|
+| **Google Gemini** ⭐ | gemini-2.0-flash | 1.500 req/dia | Recomendado |
+| Anthropic Claude | claude-haiku-4-5 | Crédito inicial | Lê PDF nativo |
+| OpenAI | gpt-4o-mini | Crédito inicial | — |
+| Groq | llama-3.3-70b-versatile | Limitado por tokens | Evitar docs grandes |
+| NVIDIA NIM | meta/llama-3.3-70b-instruct | Gratuito | — |
+| Mistral | mistral-small-latest | Tier gratuito | — |
+| Cohere | command-r | Tier gratuito | — |
+
+**Chaves gratuitas:**
+- Gemini: https://aistudio.google.com/app/apikey
+- Groq: https://console.groq.com/keys
+- Claude: https://console.anthropic.com
+
+---
+
+## 📄 FORMATOS DE ARQUIVO SUPORTADOS
+
+| Formato | Processamento | Observação |
+|---|---|---|
+| `.docx` | mammoth.js → pré-processa CLÁUSULAS → chunks | ✅ Funciona bem |
+| `.doc` | **NÃO SUPORTADO** | Converter para .docx antes |
+| `.pdf` | pdf.js (texto) ou nativo (Claude/Gemini) | ✅ Funciona |
+| `.txt` / `.csv` | Leitura direta | ✅ Funciona |
+| `.xlsx` / `.xls` | SheetJS | ✅ Funciona |
+
+**Problema conhecido com .doc:** Arquivos no formato binário Word 97 precisam ser convertidos para .docx no Word ou Google Docs antes do upload.
+
+---
+
+## ⚙️ SISTEMA DE EXTRAÇÃO IA
+
+### Chunking Inteligente
+O sistema divide documentos grandes em chunks que **nunca cortam no meio de uma cláusula**:
+1. O extrator DOCX insere `\n\n` antes de cada `CLÁUSULA XXXX`
+2. O sistema divide pelos inícios de cláusula, respeitando o limite de 12.000 chars por chunk
+3. Cada chunk é enviado separadamente com pausa de 2s entre requisições
+4. Os resultados são concatenados
+
+Para a CCT Guarulhos 2023/2024 (47.000 chars): divide em **5 chunks**, cada um com 13-27 cláusulas.
+
+### Prompt de Extração
+O prompt instrui a IA a:
+- Extrair cláusulas ordinais (PRIMEIRA, SEGUNDA...) E artigos de adendo (1a, 2a...)
+- Nunca tratar §§ como cláusulas separadas
+- Copiar conteúdo **100% integral** incluindo tabelas
+- Classificar em uma das 11 categorias
+- Escrever observações práticas para o usuário
+
+---
+
+## 📊 MÓDULOS DO SISTEMA
+
+### Dashboard
+- Cards: total instrumentos, sindicatos, empresas, cláusulas extraídas
+- Indicadores de vigência: vigentes / vence em 60 dias / vencidos
+- Lista de alertas e atividade recente
+
+### Sindicatos
+- CRUD completo: tipo (laboral/patronal), razão social, sigla, CNPJ, UF, município, base territorial, categoria, federação, confederação
+
+### Empresas
+- CRUD de empresas + operações vinculadas
+- Cada operação vincula sindicato laboral e patronal
+
+### Instrumentos
+- Upload de PDF/DOCX/TXT/XLS/CSV
+- Extração de cláusulas com IA (botão por instrumento)
+- Status: Aguardando / Processando / Processado / Erro
+- Indicador visual de vigência (verde/amarelo/vermelho)
+
+### Consulta de Cláusulas
+- Filtros: instrumento, categoria, subcategoria (buscada do banco em tempo real), busca livre
+- Cards expansíveis com conteúdo integral
+- Etiquetas coloridas: Negociar, Risco Alto, Favorável, Atenção, Referência, Contestar
+- Ordenação correta de ordinais em português (PRIMEIRA=1, DÉCIMA=10... DUCENTÉSIMA=200)
+
+### Comparativo
+- Seleção de dois instrumentos (A=anterior, B=atual)
+- Algoritmo Jaccard de similaridade por tokens
+- Status: INALTERADA (≥95%) / ALTERADA (80-94%) / MUITO ALTERADA (60-79%) / SUBSTITUÍDA (<60%) / NOVA / SUPRIMIDA
+- **Diff visual palavra a palavra:** texto removido em roxo claro tachado, texto adicionado em verde claro
+- Checkbox para ligar/desligar o destaque
+- Alerta de valor monetário alterado (fundo amarelo)
+- Export Excel e PDF
+
+### Relatórios
+**Filtros múltiplos (todos opcionais, Ctrl+clique para múltiplos):**
+- Empresa(s)
+- Operação(ões)
+- Sindicato(s) Laboral(is)
+- Sindicato(s) Patronal(is)
+- Instrumento(s) Coletivo(s)
+- Vigência: Todos / Somente vigentes / Vence em 60 dias / Somente vencidos / **Último por operação (vigente ou mais recente)**
+- Categoria(s)
+- Subcategoria(s)
+
+**Exports:**
+- Excel instrumento único: 26 colunas incluindo Conteúdo Integral, Status Vigência, Observações
+- Excel múltiplos instrumentos: mesmas colunas + aba Resumo por Instrumento
+- PDF por instrumento: conteúdo integral, agrupado por categoria, ordenado por número
+- PDF comparativo: tabela lado a lado com status colorido
+
+---
+
+## 🔑 VARIÁVEIS DE AMBIENTE
+
+No GitHub (Settings → Secrets → Actions):
+```
+VITE_SUPABASE_URL      = https://uioctuzoxkvmpmhbfice.supabase.co
+VITE_SUPABASE_ANON_KEY = eyJ... (chave anon do Supabase)
+```
+
+No arquivo local `.env` (para desenvolvimento):
+```
+VITE_SUPABASE_URL=https://uioctuzoxkvmpmhbfice.supabase.co
+VITE_SUPABASE_ANON_KEY=eyJ...
+```
+
+As chaves de IA **não ficam no .env** — o usuário insere na tela de Configurações e são salvas no localStorage.
+
+---
+
+## 🚀 DEPLOY
+
+Push para `main` dispara o GitHub Actions automaticamente:
+```
 git add .
-git commit -m "Primeiro commit - Motor CCT"
-git branch -M main
-git remote add origin https://github.com/SEU_USUARIO/motor-cct.git
-git push -u origin main
+git commit -m "descrição"
+git push origin main
 ```
-
-**ATENÇÃO:** Troque `SEU_USUARIO` pelo seu nome de usuário do GitHub (ex: `andersonadvogado`)
-
-Se pedir login, use seu usuário e senha do GitHub.
+Deploy leva ~3-4 minutos. URL: https://anfers1985.github.io/motor-cct/
 
 ---
 
-## ETAPA 5 — CRIAR CONTA E PROJETO NO SUPABASE
+## 🛠️ DESENVOLVIMENTO LOCAL
 
-### 5.1 — Criar a conta
-
-1. Vá para: **https://supabase.com**
-2. Clique em **Start your project**
-3. Clique em **Continue with GitHub** (entra com a mesma conta GitHub que você criou)
-4. Autorize o Supabase a acessar sua conta GitHub
-
-### 5.2 — Criar o projeto
-
-1. Clique em **New project**
-2. Em **Name**, digite: `motor-cct`
-3. Em **Database Password**, crie uma senha forte (guarde ela, mas não vai precisar frequentemente)
-4. Em **Region**, escolha **South America (São Paulo)**
-5. Clique em **Create new project**
-6. **Aguarde 1-2 minutos** enquanto o projeto é criado (vai aparecer uma tela de loading)
-
-### 5.3 — Copiar as chaves do Supabase
-
-Quando o projeto estiver pronto:
-
-1. No menu esquerdo, clique em **⚙️ Project Settings** (última opção)
-2. Clique em **API**
-3. Você vai ver dois valores importantes:
-   - **Project URL** — algo como `https://abcdefgh.supabase.co`
-   - **anon public** (em "Project API keys") — uma chave longa começando com `eyJ...`
-4. **Copie e guarde os dois valores** — você vai precisar deles em breve
-
----
-
-## ETAPA 6 — CRIAR AS TABELAS NO BANCO DE DADOS
-
-1. No menu esquerdo do Supabase, clique em **SQL Editor** (ícone de código `</>`)
-2. Clique em **New query**
-3. Abra o arquivo `supabase_setup.sql` que está na pasta do projeto
-4. Selecione **todo o conteúdo** do arquivo (Ctrl+A) e **copie** (Ctrl+C)
-5. Cole no editor do Supabase (Ctrl+V)
-6. Clique em **Run** (botão verde, canto inferior direito)
-7. Deve aparecer uma mensagem de sucesso. Se aparecer algum erro, pode ignorar erros do tipo "already exists"
-
----
-
-## ETAPA 7 — CONFIGURAR O LOGIN COM GITHUB
-
-### 7.1 — Criar OAuth App no GitHub
-
-1. Vá para: **https://github.com/settings/developers**
-2. Clique em **OAuth Apps** no menu esquerdo
-3. Clique em **New OAuth App**
-4. Preencha:
-   - **Application name:** `Motor CCT`
-   - **Homepage URL:** `https://SEU_USUARIO.github.io/motor-cct` (troque SEU_USUARIO)
-   - **Authorization callback URL:** copie do Supabase (veja próximo passo)
-5. **ANTES de salvar**, vá buscar a URL de callback no Supabase:
-   - No Supabase, vá em **Authentication** → **Providers** → clique em **GitHub**
-   - Você verá uma URL de **Callback URL** — copie ela (algo como `https://abcdefgh.supabase.co/auth/v1/callback`)
-   - Cole essa URL no campo **Authorization callback URL** do GitHub
-6. Clique em **Register application**
-7. Na próxima tela, você verá o **Client ID** — **copie e guarde**
-8. Clique em **Generate a new client secret**, **copie o secret** imediatamente (ele só aparece uma vez!)
-
-### 7.2 — Configurar no Supabase
-
-1. No Supabase, vá em **Authentication** → **Providers** → **GitHub**
-2. Clique no toggle para **ativar** o provider GitHub
-3. Cole o **Client ID** no campo correspondente
-4. Cole o **Client Secret** no campo correspondente
-5. Clique em **Save**
-
----
-
-## ETAPA 8 — CONFIGURAR O GITHUB PAGES E AS VARIÁVEIS DE AMBIENTE
-
-### 8.1 — Adicionar as variáveis secretas no GitHub
-
-1. Vá para o seu repositório no GitHub: `https://github.com/SEU_USUARIO/motor-cct`
-2. Clique em **Settings** (aba no topo do repositório)
-3. No menu esquerdo, clique em **Secrets and variables** → **Actions**
-4. Clique em **New repository secret**
-5. Adicione o primeiro segredo:
-   - **Name:** `VITE_SUPABASE_URL`
-   - **Secret:** cole o **Project URL** do Supabase (ex: `https://abcdefgh.supabase.co`)
-   - Clique **Add secret**
-6. Clique em **New repository secret** novamente
-7. Adicione o segundo segredo:
-   - **Name:** `VITE_SUPABASE_ANON_KEY`
-   - **Secret:** cole a chave **anon public** do Supabase (a que começa com `eyJ...`)
-   - Clique **Add secret**
-
-### 8.2 — Ativar o GitHub Pages
-
-1. Ainda nas configurações do repositório, clique em **Pages** no menu esquerdo
-2. Em **Source**, selecione **GitHub Actions**
-3. Clique em **Save**
-
-### 8.3 — Disparar o primeiro deploy
-
-1. Vá em **Actions** (aba no topo do repositório)
-2. Se já houver um workflow rodando, aguarde ele terminar (ícone amarelo = rodando, verde = ok, vermelho = erro)
-3. Se não houver nenhum workflow rodando, você precisa fazer um novo push:
-   - No terminal, na pasta do projeto, digite:
-   ```
-   git commit --allow-empty -m "Trigger deploy"
-   git push
-   ```
-
----
-
-## ETAPA 9 — INSTALAR AS DEPENDÊNCIAS (uma vez)
-
-No terminal, na pasta `motor-cct`, execute:
-
-```
+```bash
 npm install
-```
-
-Isso vai baixar todas as bibliotecas necessárias. Aguarde (pode demorar 2-3 minutos).
-
-Para testar localmente antes de subir:
-
-```
 npm run dev
+# Abre em http://localhost:5173
 ```
 
-Abra o navegador em `http://localhost:5173` — você deve ver a tela de login.
+Para funcionar localmente, criar `.env` com as variáveis do Supabase.
 
 ---
 
-## ETAPA 10 — ACESSAR O SISTEMA
+## ⚠️ PROBLEMAS CONHECIDOS E SOLUÇÕES
 
-Após o deploy (workflow verde no GitHub Actions):
-
-1. Vá para: `https://SEU_USUARIO.github.io/motor-cct`
-2. Clique em **Entrar com GitHub**
-3. Autorize o aplicativo
-4. Você estará logado e vai ver o Dashboard
-
----
-
-## PRIMEIROS PASSOS NO SISTEMA
-
-### Ordem recomendada para começar:
-
-**1. Configurar IA (obrigatório para extração)**
-- Vá em **Configurações** (menu esquerdo)
-- Recomendo começar com **Google Gemini** (mais fácil de obter chave grátis)
-- Acesse https://aistudio.google.com/app/apikey, faça login com Google, clique em "Create API Key"
-- Cole a chave no sistema, selecione Gemini e clique em **Testar Conexão**
-
-**2. Cadastrar sindicatos**
-- Vá em **Sindicatos** → **+ Novo Sindicato**
-- Cadastre os sindicatos laborais e patronais que você trabalha
-
-**3. Cadastrar empresa**
-- Vá em **Empresas** → **+ Nova Empresa**
-- Cadastre a empresa (ex: Mercado Livre)
-- Expanda a empresa e adicione as operações (ex: CD São Paulo 1)
-- Em cada operação, vincule os sindicatos laboral e patronal
-
-**4. Cadastrar instrumento e fazer upload**
-- Vá em **Instrumentos** → **+ Novo Instrumento**
-- Preencha o tipo, nome, empresa, operação, sindicatos e datas de vigência
-- Faça upload do arquivo PDF/DOCX
-- Salve
-
-**5. Extrair cláusulas com IA**
-- Na lista de instrumentos, clique em **🤖 Extrair Cláusulas com IA**
-- Aguarde o processamento (pode levar 30-120 segundos dependendo do tamanho)
-- Quando aparecer "✅ X cláusulas extraídas com sucesso!", está pronto
-
-**6. Consultar e usar**
-- Vá em **Consulta de Cláusulas** para navegar e filtrar
-- Use **Comparativo** para comparar dois instrumentos
-- Use **Relatórios** para exportar Excel e PDF
+| Problema | Causa | Solução |
+|---|---|---|
+| Poucas cláusulas extraídas | Texto corrido sem quebras / chunks cortando cláusulas | Corrigido na v1.3: extrator DOCX pré-processa, chunks respeitam bordas |
+| Arquivo .doc falha | Formato binário Word 97 | Converter para .docx no Word ou Google Docs |
+| Erro 429 Gemini | Limite diário (20 req para gemini-2.5, 1500 para gemini-2.0) | Usar gemini-2.0-flash; aguardar reset às 21h (Brasília) ou criar nova chave |
+| Erro 413 Groq | Limite de tokens por minuto muito baixo | Não usar Groq para documentos grandes |
+| Cache navegador | JS antigo em cache | Ctrl+Shift+Delete → limpar cache; ou abrir aba anônima |
+| Login 404 após OAuth | Redirect URL errado | Verificar Supabase Auth → URL Configuration → Site URL = https://anfers1985.github.io/motor-cct |
+| Subcategorias vazias | Bug antigo | Corrigido na v1.2: subcategorias buscadas do banco em tempo real |
 
 ---
 
-## SOLUÇÃO DE PROBLEMAS COMUNS
+## 📋 HISTÓRICO DE VERSÕES
 
-**"Erro 401" na extração de IA**
-→ Sua chave API está incorreta ou expirou. Vá em Configurações e insira uma nova.
+### v1.3 (Maio 2026) — atual
+- ✅ Chunking inteligente: chunks respeitam bordas de cláusulas
+- ✅ Extrator DOCX pré-processa inserindo quebras antes de cada CLÁUSULA
+- ✅ Prompt melhorado: distingue cláusulas de artigos de adendo, §§ não viram cláusulas
+- ✅ Pausa de 2s entre chunks (evita rate limit)
 
-**"Erro 429" na extração de IA**
-→ Você atingiu o limite de requisições gratuitas. Aguarde alguns minutos ou troque de provedor.
+### v1.2 (Maio 2026)
+- ✅ Subcategorias buscadas em tempo real do banco
+- ✅ Diff visual no Comparativo (roxo=removido, verde=adicionado)
+- ✅ Relatórios com filtros múltiplos (empresa, operação, sindicato, etc.)
+- ✅ Excel com Conteúdo Integral e Status de Vigência
+- ✅ PDF com conteúdo integral sem cortes
+- ✅ Ordenação de cláusulas até DUCENTÉSIMA (200) + romanos + arábicos
 
-**Login não funciona (fica carregando)**
-→ Verifique se o Callback URL no GitHub OAuth App está exatamente igual ao que o Supabase mostra.
+### v1.1 (Maio 2026)
+- ✅ Login GitHub OAuth funcionando com HashRouter
+- ✅ Bucket de storage criado
+- ✅ Extração de cláusulas com multi-provedor de IA
 
-**Deploy falhou (ícone vermelho no GitHub Actions)**
-→ Verifique se os dois secrets (VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY) estão corretos.
-
-**"Cannot read properties of null"**
-→ Provavelmente o SQL não foi executado corretamente. Repita a Etapa 6.
-
----
-
-## ATUALIZAR O SISTEMA NO FUTURO
-
-Sempre que você modificar algum arquivo, para publicar a atualização:
-
-```
-git add .
-git commit -m "Descrição do que mudou"
-git push
-```
-
-O GitHub Actions vai fazer o deploy automaticamente.
+### v1.0 (Maio 2026)
+- ✅ Sistema base: CRUD sindicatos, empresas, operações, instrumentos
+- ✅ Upload de arquivos, extração de cláusulas, comparativo básico
 
 ---
 
-*Motor CCT v1.0 — Desenvolvido para Anderson — OAB/SC 44.858*
+## 👤 AUTOR
+
+Anderson — OAB/SC 44.858
+Advogado Trabalhista e Consultor Sindical
+andersonfernand3s@gmail.com
+GitHub: anfers1985
+
+---
+
+*Para continuar o desenvolvimento em novo chat, cole este README como contexto inicial.*
