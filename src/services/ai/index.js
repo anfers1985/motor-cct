@@ -84,13 +84,19 @@ function preProcessarTexto(texto) {
   ).trim()
 }
 
-// Divide o texto em chunks respeitando as bordas das cláusulas
+// Divide o texto em chunks SEMPRE começando numa CLÁUSULA
+// BUG CORRIGIDO: agora chama preProcessarTexto primeiro, depois divide
 function dividirEmChunks(texto, maxChars = 12000) {
+  // 1. Pré-processa para garantir \n\n antes de cada CLÁUSULA
   const processado = preProcessarTexto(texto)
-  // Divide no início de cada CLÁUSULA
-  const blocos = processado.split(/(?=\n\nCLÁUSULA\s+)/)
+
+  // 2. Separa em blocos — cada bloco começa numa CLÁUSULA (ou é preâmbulo)
+  // Divide em qualquer ponto onde aparece "\n\nCLÁUSULA " (com ou sem acento)
+  const blocos = processado.split(/(?=\n\nCL[AÁ]USULA\s)/i)
+
   const chunks = []
   let chunkAtual = ''
+
   for (const bloco of blocos) {
     if (chunkAtual.length + bloco.length > maxChars && chunkAtual.length > 0) {
       chunks.push(chunkAtual.trim())
@@ -100,10 +106,44 @@ function dividirEmChunks(texto, maxChars = 12000) {
     }
   }
   if (chunkAtual.trim()) chunks.push(chunkAtual.trim())
+
+  // Se não achou nenhuma divisão (texto sem palavra CLÁUSULA), devolve como chunk único
+  if (chunks.length === 0) return [processado.trim()]
+
   return chunks
 }
 
-async function geminiCall(url, texto) {
+// Processa múltiplos chunks e agrega resultados — usado por TODOS os provedores
+async function processarEmChunks(texto, callFn, pausaMs = 2000) {
+  // Textos pequenos: processa direto
+  if (texto.length <= 12000) {
+    const raw = await callFn(preProcessarTexto(texto))
+    return parseJSON(raw)
+  }
+
+  const chunks = dividirEmChunks(texto)
+  console.log(`Dividindo em ${chunks.length} chunks para extração completa...`)
+
+  let todas = []
+  for (let i = 0; i < chunks.length; i++) {
+    console.log(`Processando chunk ${i + 1}/${chunks.length} (${chunks[i].length} chars)...`)
+    try {
+      const raw = await callFn(chunks[i])
+      const clausulas = parseJSON(raw)
+      console.log(`  Chunk ${i + 1}: ${clausulas.length} cláusulas extraídas`)
+      todas = todas.concat(clausulas)
+      if (i < chunks.length - 1) await new Promise(r => setTimeout(r, pausaMs))
+    } catch(e) {
+      console.warn(`Chunk ${i + 1} falhou:`, e.message)
+    }
+  }
+
+  if (todas.length === 0) throw new Error('Nenhuma cláusula extraída em nenhum chunk')
+  return todas
+}
+
+// ─── GEMINI ────────────────────────────────────────────────────────────────────
+async function geminiCallRaw(url, texto) {
   const body = {
     contents: [{ parts: [{ text: PROMPT_BASE(texto) }] }],
     generationConfig: { temperature: 0.1, maxOutputTokens: 65536 }
@@ -122,33 +162,28 @@ async function geminiCall(url, texto) {
 
 async function callGemini(config, texto) {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${config.modelo}:generateContent?key=${config.chave}`
+  return processarEmChunks(texto, (chunk) => geminiCallRaw(url, chunk), 2000)
+}
 
-  // Se o texto for pequeno, processa direto
-  if (texto.length <= 12000) {
-    return await geminiCall(url, preProcessarTexto(texto))
+// ─── CLAUDE ────────────────────────────────────────────────────────────────────
+async function claudeCallRaw(config, texto) {
+  const headers = {
+    'Content-Type': 'application/json',
+    'x-api-key': config.chave,
+    'anthropic-version': '2023-06-01',
+    'anthropic-dangerous-direct-browser-access': 'true',
   }
-
-  // Divide em chunks respeitando bordas de cláusulas
-  const chunks = dividirEmChunks(texto)
-  console.log(`Dividindo em ${chunks.length} chunks...`)
-
-  let todas = []
-  for (let i = 0; i < chunks.length; i++) {
-    console.log(`Processando chunk ${i + 1} de ${chunks.length} (${chunks[i].length} chars)...`)
-    try {
-      const raw = await geminiCall(url, chunks[i])
-      const clausulas = parseJSON(raw)
-      console.log(`  Chunk ${i + 1}: ${clausulas.length} cláusulas extraídas`)
-      todas = todas.concat(clausulas)
-      // Pausa entre chunks para não exceder rate limit
-      if (i < chunks.length - 1) await new Promise(r => setTimeout(r, 2000))
-    } catch(e) {
-      console.warn(`Chunk ${i + 1} falhou:`, e.message)
-    }
+  const body = {
+    model: config.modelo,
+    max_tokens: 8192,
+    messages: [{ role: 'user', content: PROMPT_BASE(texto) }]
   }
-
-  if (todas.length === 0) throw new Error('Nenhuma cláusula extraída')
-  return JSON.stringify(todas)
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST', headers, body: JSON.stringify(body)
+  })
+  if (!res.ok) throw new Error(`Claude ${res.status}: ${await res.text()}`)
+  const data = await res.json()
+  return data.content?.[0]?.text || ''
 }
 
 async function callClaude(config, texto, isPDF, pdfBase64) {
@@ -158,31 +193,34 @@ async function callClaude(config, texto, isPDF, pdfBase64) {
     'anthropic-version': '2023-06-01',
     'anthropic-dangerous-direct-browser-access': 'true',
   }
-  let content
+
+  // PDF nativo: envia o arquivo inteiro de uma vez (Claude lê PDF nativamente)
   if (isPDF && pdfBase64) {
-    content = [
+    const content = [
       { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: pdfBase64 } },
       { type: 'text', text: PROMPT_BASE('(Ver documento PDF anexo acima — extraia TODAS as cláusulas com conteúdo integral)') }
     ]
-  } else {
-    content = PROMPT_BASE(preProcessarTexto(texto))
+    const body = { model: config.modelo, max_tokens: 8192, messages: [{ role: 'user', content }] }
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST', headers, body: JSON.stringify(body)
+    })
+    if (!res.ok) throw new Error(`Claude ${res.status}: ${await res.text()}`)
+    const data = await res.json()
+    return parseJSON(data.content?.[0]?.text || '')
   }
-  const body = { model: config.modelo, max_tokens: 8192, messages: [{ role: 'user', content }] }
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST', headers, body: JSON.stringify(body)
-  })
-  if (!res.ok) throw new Error(`Claude ${res.status}: ${await res.text()}`)
-  const data = await res.json()
-  return data.content?.[0]?.text || ''
+
+  // DOCX/TXT: usa chunking igual ao Gemini
+  return processarEmChunks(texto, (chunk) => claudeCallRaw(config, chunk), 1500)
 }
 
-async function callOpenAICompat(config, texto, endpoint) {
+// ─── OPENAI COMPAT (OpenAI, Groq, NVIDIA, Mistral) ───────────────────────────
+async function openAICompatCallRaw(config, texto, endpoint) {
   const res = await fetch(endpoint, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${config.chave}` },
     body: JSON.stringify({
       model: config.modelo,
-      messages: [{ role: 'user', content: PROMPT_BASE(preProcessarTexto(texto)) }],
+      messages: [{ role: 'user', content: PROMPT_BASE(texto) }],
       temperature: 0.1,
       max_tokens: 8192,
     })
@@ -192,51 +230,51 @@ async function callOpenAICompat(config, texto, endpoint) {
   return data.choices?.[0]?.message?.content || ''
 }
 
-async function callCohere(config, texto) {
+async function callOpenAICompat(config, texto, endpoint) {
+  return processarEmChunks(texto, (chunk) => openAICompatCallRaw(config, chunk, endpoint), 2000)
+}
+
+// ─── COHERE ───────────────────────────────────────────────────────────────────
+async function cohereCallRaw(config, texto) {
   const res = await fetch('https://api.cohere.ai/v1/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${config.chave}` },
-    body: JSON.stringify({ model: config.modelo, message: PROMPT_BASE(preProcessarTexto(texto)), temperature: 0.1 })
+    body: JSON.stringify({ model: config.modelo, message: PROMPT_BASE(texto), temperature: 0.1 })
   })
   if (!res.ok) throw new Error(`Cohere ${res.status}: ${await res.text()}`)
   const data = await res.json()
   return data.text || ''
 }
 
+async function callCohere(config, texto) {
+  return processarEmChunks(texto, (chunk) => cohereCallRaw(config, chunk), 2000)
+}
+
+// ─── ENTRY POINT ──────────────────────────────────────────────────────────────
 export async function extrairClausulas(texto, { isPDF = false, pdfBase64 = null } = {}) {
   const config = getAIConfig()
   if (!config?.provedor || !config?.chave) {
     throw new Error('Configure um provedor de IA nas Configurações antes de extrair cláusulas.')
   }
 
-  let raw = ''
   switch (config.provedor) {
     case 'gemini':
-      raw = await callGemini(config, texto)
-      break
+      return callGemini(config, texto)
     case 'claude':
-      raw = await callClaude(config, texto, isPDF, pdfBase64)
-      break
+      return callClaude(config, texto, isPDF, pdfBase64)
     case 'openai':
-      raw = await callOpenAICompat(config, texto, 'https://api.openai.com/v1/chat/completions')
-      break
+      return callOpenAICompat(config, texto, 'https://api.openai.com/v1/chat/completions')
     case 'groq':
-      raw = await callOpenAICompat(config, texto, 'https://api.groq.com/openai/v1/chat/completions')
-      break
+      return callOpenAICompat(config, texto, 'https://api.groq.com/openai/v1/chat/completions')
     case 'nvidia':
-      raw = await callOpenAICompat(config, texto, 'https://integrate.api.nvidia.com/v1/chat/completions')
-      break
+      return callOpenAICompat(config, texto, 'https://integrate.api.nvidia.com/v1/chat/completions')
     case 'mistral':
-      raw = await callOpenAICompat(config, texto, 'https://api.mistral.ai/v1/chat/completions')
-      break
+      return callOpenAICompat(config, texto, 'https://api.mistral.ai/v1/chat/completions')
     case 'cohere':
-      raw = await callCohere(config, texto)
-      break
+      return callCohere(config, texto)
     default:
       throw new Error(`Provedor desconhecido: ${config.provedor}`)
   }
-
-  return parseJSON(raw)
 }
 
 export async function testarConexao(config) {
@@ -268,19 +306,19 @@ export async function testarConexao(config) {
         return { ok: true }
       }
       case 'openai':
-        await callOpenAICompat(config, testPrompt, 'https://api.openai.com/v1/chat/completions')
+        await openAICompatCallRaw(config, testPrompt, 'https://api.openai.com/v1/chat/completions')
         return { ok: true }
       case 'groq':
-        await callOpenAICompat(config, testPrompt, 'https://api.groq.com/openai/v1/chat/completions')
+        await openAICompatCallRaw(config, testPrompt, 'https://api.groq.com/openai/v1/chat/completions')
         return { ok: true }
       case 'nvidia':
-        await callOpenAICompat(config, testPrompt, 'https://integrate.api.nvidia.com/v1/chat/completions')
+        await openAICompatCallRaw(config, testPrompt, 'https://integrate.api.nvidia.com/v1/chat/completions')
         return { ok: true }
       case 'mistral':
-        await callOpenAICompat(config, testPrompt, 'https://api.mistral.ai/v1/chat/completions')
+        await openAICompatCallRaw(config, testPrompt, 'https://api.mistral.ai/v1/chat/completions')
         return { ok: true }
       case 'cohere':
-        await callCohere(config, testPrompt)
+        await cohereCallRaw(config, testPrompt)
         return { ok: true }
       default:
         throw new Error('Provedor desconhecido')
