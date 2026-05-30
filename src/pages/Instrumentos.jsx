@@ -136,8 +136,9 @@ export default function Instrumentos() {
         texto = await file.text()
       }
 
-      setLog(l => ({ ...l, [inst.id]: 'Enviando para IA e aguardando resposta...' }))
-      const clausulas = await extrairClausulas(texto, { isPDF, pdfBase64 })
+      const onProgress = (msg) => setLog(l => ({ ...l, [inst.id]: msg }))
+      onProgress('Enviando para IA...')
+      const clausulas = await extrairClausulas(texto, { isPDF, pdfBase64, onProgress })
 
       setLog(l => ({ ...l, [inst.id]: `Salvando ${clausulas.length} cláusulas no banco...` }))
       const rows = clausulas.map(c => ({ ...c, instrumento_id: inst.id, user_id: user.id, tags: [] }))
