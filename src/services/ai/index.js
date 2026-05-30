@@ -115,11 +115,33 @@ function dividirEmChunks(texto, maxChars = 12000) {
   return chunks.length > 0 ? chunks : [processado.trim()]
 }
 
-// Processa chunks com progresso visível e erros informativos
-async function processarEmChunks(texto, callFn, pausaMs = 2000, onProgress = null) {
+// Executa uma chamada com retry automático (até 3 tentativas) e backoff para rate limit
+async function comRetry(fn, tentativas = 3, onProgress = null, label = '') {
+  for (let t = 1; t <= tentativas; t++) {
+    try {
+      return await fn()
+    } catch (e) {
+      const isRateLimit = e.message.includes('429') || e.message.toLowerCase().includes('quota') || e.message.toLowerCase().includes('rate')
+      const isServidor = e.message.includes('500') || e.message.includes('503')
+      const podeRetry = (isRateLimit || isServidor) && t < tentativas
+
+      if (podeRetry) {
+        // Rate limit: espera crescente — 30s, 60s
+        const espera = isRateLimit ? (t === 1 ? 30000 : 60000) : 5000
+        onProgress?.(`⚠️ ${label} — ${isRateLimit ? 'Limite da API atingido' : 'Erro temporário'}. Aguardando ${espera / 1000}s (tentativa ${t}/${tentativas})...`)
+        await new Promise(r => setTimeout(r, espera))
+      } else {
+        throw e
+      }
+    }
+  }
+}
+
+// Processa chunks com progresso visível, retry e erros informativos
+async function processarEmChunks(texto, callFn, pausaMs = 3000, onProgress = null) {
   if (texto.length <= 12000) {
     onProgress?.('Enviando para IA (1 bloco)...')
-    const raw = await callFn(preProcessarTexto(texto))
+    const raw = await comRetry(() => callFn(preProcessarTexto(texto)), 3, onProgress, 'Bloco único')
     const result = parseJSON(raw)
     onProgress?.(`✅ ${result.length} cláusulas extraídas`)
     return result
@@ -132,20 +154,21 @@ async function processarEmChunks(texto, callFn, pausaMs = 2000, onProgress = nul
   let primeiroErro = null
 
   for (let i = 0; i < chunks.length; i++) {
-    onProgress?.(`Processando bloco ${i + 1}/${chunks.length}...`)
+    const label = `Bloco ${i + 1}/${chunks.length}`
+    onProgress?.(`Processando ${label}...`)
     try {
-      const raw = await callFn(chunks[i])
+      const raw = await comRetry(() => callFn(chunks[i]), 3, onProgress, label)
       const clausulas = parseJSON(raw)
       todas = todas.concat(clausulas)
-      onProgress?.(`Bloco ${i + 1}/${chunks.length}: ${clausulas.length} cláusulas — total parcial: ${todas.length}`)
+      onProgress?.(`${label}: ${clausulas.length} cláusulas — total: ${todas.length}`)
       if (i < chunks.length - 1) {
-        onProgress?.(`Aguardando ${pausaMs / 1000}s antes do próximo bloco...`)
+        onProgress?.(`Pausa de ${pausaMs / 1000}s antes do próximo bloco...`)
         await new Promise(r => setTimeout(r, pausaMs))
       }
     } catch (e) {
-      console.warn(`Chunk ${i + 1} falhou:`, e.message)
+      console.warn(`Chunk ${i + 1} falhou definitivamente:`, e.message)
       if (!primeiroErro) primeiroErro = e
-      onProgress?.(`⚠️ Bloco ${i + 1} falhou: ${e.message.slice(0, 100)}`)
+      onProgress?.(`❌ ${label} falhou: ${e.message.slice(0, 120)}`)
     }
   }
 
@@ -197,7 +220,7 @@ async function callGemini(config, texto, onProgress) {
   return processarEmChunks(
     texto,
     (chunk) => geminiCallRaw(url, chunk, isThinkingModel),
-    2000,
+    3000,
     onProgress
   )
 }
