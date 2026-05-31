@@ -103,6 +103,10 @@ export function toNumeroOrdinal(n) {
   if (!n) return 9999
   const str = String(n).trim()
 
+  // Cláusula CCP: "1a", "2a", "10a", "1º", "2º" → sortam DEPOIS das principais
+  const ccp = str.match(/^(\d+)[aº°]/i)
+  if (ccp) return 1000 + parseInt(ccp[1])
+
   // Número arábico puro: "1", "2", "42"
   const arab = str.match(/^(\d+)/)
   if (arab) return parseInt(arab[1])
