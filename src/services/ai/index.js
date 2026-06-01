@@ -41,30 +41,14 @@ REGRAS OBRIGATÓRIAS:
 
 3. NUMERAÇÃO: use o ordinal exato: "PRIMEIRA", "DÉCIMA SEGUNDA", "1a", "2a" etc.
 
-4. TÍTULO: use o título EXPLÍCITO do documento (ex: "REAJUSTE SALARIAL", "PLR", "ELEIÇÃO DA CIPA").
-   Se a cláusula não tiver título explícito (comum nas CCP 1a a 14a), crie um título CURTO e descritivo (máximo 6 palavras) baseado no assunto central. Ex: "Composição da CCP", "Funcionamento da CCP", "Reuniões de Conciliação".
-   NUNCA use a primeira frase do conteúdo como título.
-
-5. CATEGORIAS — use exatamente uma:
+4. CATEGORIAS (use exatamente uma):
    Remuneração | Jornada de Trabalho | Benefícios | Saúde e Segurança | Estabilidade e Garantias | FGTS e Rescisão | Relações Sindicais | Penalidades | Capacitação | Igualdade e Diversidade | Disposições Gerais
 
-   REGRAS DE CATEGORIZAÇÃO:
-   - Cláusulas CCP (1a, 2a...14a) sobre procedimentos de conciliação → "Relações Sindicais"
-   - Vigência, Abrangência, Data-Base → "Disposições Gerais"
-   - Contribuição sindical, mensalidades → "Relações Sindicais"
-   - Pisos, reajuste, PLR, 13º, adiantamento → "Remuneração"
-   - Horas extras, banco de horas, jornada → "Jornada de Trabalho"
-   - Alimentação, odontológico, farmácia, transporte → "Benefícios"
-   - CIPA, EPI, saúde → "Saúde e Segurança"
-   - Gestante, aposentadoria, dispensa coletiva → "Estabilidade e Garantias"
-   - Rescisão, FGTS, homologação → "FGTS e Rescisão"
-   - Multa por descumprimento → "Penalidades"
+5. SUBCATEGORIA: use uma subcategoria específica e descritiva (ex: "Piso Salarial", "PLR", "Horas Extras", "CIPA")
 
-6. SUBCATEGORIA: use uma subcategoria específica e descritiva (ex: "Piso Salarial", "PLR", "Horas Extras", "CIPA", "Contribuição Assistencial")
+6. OBSERVAÇÕES: escreva 1-2 frases sobre o impacto prático para o empregador/RH
 
-7. OBSERVAÇÕES: escreva 1-2 frases sobre o impacto prático para o empregador/RH
-
-8. SAÍDA OBRIGATÓRIA: retorne APENAS um array JSON válido. Absolutamente nenhum texto antes ou depois. Sem markdown. Sem explicações.
+7. SAÍDA OBRIGATÓRIA: retorne APENAS um array JSON válido. Absolutamente nenhum texto antes ou depois. Sem markdown. Sem explicações.
    Formato: [{"numero":"PRIMEIRA","titulo":"...","conteudo":"...","categoria":"...","subcategoria":"...","valor_monetario":null,"percentual":null,"vigencia_especifica":null,"observacoes":"..."},...]
 
 TRECHO DO DOCUMENTO:
