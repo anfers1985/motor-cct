@@ -1,8 +1,3 @@
-// Algoritmo de comparação de cláusulas — Motor CCT
-// Matching em dois estágios: CCP vs CCP primeiro, regulares vs regulares depois.
-// Isso evita que cláusulas do adendo CCP (1a, 2a...) "roubem" matches de cláusulas
-// principais que têm conteúdo similar (ex: 12a sobre contribuição sindical vs QUINQUAGÉSIMA QUARTA).
-
 const STOPWORDS = new Set([
   'a','o','e','de','do','da','dos','das','em','no','na','nos','nas',
   'que','com','para','por','se','ao','às','um','uma','uns','umas',
@@ -13,110 +8,118 @@ const STOPWORDS = new Set([
 ])
 
 function tokenize(text) {
-  return new Set(
-    (text || '')
-      .toLowerCase()
-      .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-      .replace(/[^a-z0-9\s]/g, ' ')
-      .split(/\s+/)
-      .filter(t => t.length > 2 && !STOPWORDS.has(t))
-  )
+  return text
+    .toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter(t => t.length > 2 && !STOPWORDS.has(t))
 }
 
 function jaccard(setA, setB) {
   if (setA.size === 0 && setB.size === 0) return 1
-  let inter = 0
-  setA.forEach(x => { if (setB.has(x)) inter++ })
-  return inter / (setA.size + setB.size - inter)
+  const intersection = new Set([...setA].filter(x => setB.has(x)))
+  const union = new Set([...setA, ...setB])
+  return intersection.size / union.size
 }
 
 export function similaridade(textoA, textoB) {
-  return jaccard(tokenize(textoA), tokenize(textoB))
+  const tA = new Set(tokenize(textoA || ''))
+  const tB = new Set(tokenize(textoB || ''))
+  return jaccard(tA, tB)
 }
 
 export function classificarSimilaridade(score) {
-  if (score >= 0.95) return { label: 'INALTERADA',    cls: 'bg-emerald-100 text-emerald-800', order: 0 }
-  if (score >= 0.80) return { label: 'ALTERADA',      cls: 'bg-blue-100 text-blue-800',       order: 1 }
-  if (score >= 0.60) return { label: 'MUITO ALTERADA',cls: 'bg-amber-100 text-amber-800',     order: 2 }
-  return               { label: 'SUBSTITUÍDA',        cls: 'bg-red-100 text-red-800',         order: 3 }
+  if (score >= 0.95) return { label: 'INALTERADA', cls: 'bg-emerald-100 text-emerald-800', order: 0 }
+  if (score >= 0.80) return { label: 'ALTERADA', cls: 'bg-blue-100 text-blue-800', order: 1 }
+  if (score >= 0.60) return { label: 'MUITO ALTERADA', cls: 'bg-amber-100 text-amber-800', order: 2 }
+  return { label: 'SUBSTITUÍDA', cls: 'bg-red-100 text-red-800', order: 3 }
 }
 
-function isCCP(numero) {
-  return /^\d+[aº°]/i.test(String(numero || '').trim())
+// Remove duplicates by numero+titulo key (handles DB duplicates from retried AI calls)
+function deduplicar(clausulas) {
+  const seen = new Set()
+  return clausulas.filter(c => {
+    const key = (c.numero || '').toUpperCase().trim() + '|||' + (c.titulo || '').trim().slice(0, 80)
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
 }
 
-function calcScore(cA, cB) {
-  const tTitle = jaccard(tokenize(cA.titulo), tokenize(cB.titulo))
-  const tContent = jaccard(tokenize(cA.conteudo), tokenize(cB.conteudo))
-  return tTitle * 0.4 + tContent * 0.6
+// CCP adendo clauses: "1a", "2a", ..., "14a"
+function isCCP(clausula) {
+  return /^\d+a$/i.test((clausula.numero || '').trim())
 }
 
-// Matching global (melhor score primeiro) dentro de um grupo
-function matchGrupo(listaA, listaB, usadasBGlobal) {
-  const scores = []
-  for (const cA of listaA) {
-    for (const cB of listaB) {
-      scores.push({ cA, cB, s: calcScore(cA, cB) })
+// Global best-match within a group (greedy by score — far better than greedy by order)
+function matchGrupo(grupoA, grupoB, threshold) {
+  const pairs = []
+  for (const a of grupoA) {
+    for (const b of grupoB) {
+      const scoreTitle   = similaridade(a.titulo, b.titulo)
+      const scoreContent = similaridade(a.conteudo, b.conteudo)
+      const score = scoreTitle * 0.4 + scoreContent * 0.6
+      if (score > threshold) pairs.push({ a, b, score })
     }
   }
-  scores.sort((a, b) => b.s - a.s)
+  // Sort descending so best pairs are consumed first
+  pairs.sort((x, y) => y.score - x.score)
 
-  const usadasB = new Set()
-  const usadasA = new Set()
-  const matches = []
-
-  for (const { cA, cB, s } of scores) {
-    if (usadasB.has(cB.id) || usadasA.has(cA.id)) continue
-    if (s < 0.30) break
-    usadasB.add(cB.id)
-    usadasA.add(cA.id)
-    usadasBGlobal.add(cB.id)
-    matches.push({ cA, cB, score: s })
+  const usedA = new Set()
+  const usedB = new Set()
+  const matched = []
+  for (const { a, b, score } of pairs) {
+    if (usedA.has(a.id) || usedB.has(b.id)) continue
+    usedA.add(a.id)
+    usedB.add(b.id)
+    matched.push({ a, b, score })
   }
-
-  return { matches, usadasA }
+  return { matched, usedA, usedB }
 }
 
 export function compararInstrumentos(clausulasA, clausulasB) {
+  // 1. Deduplicate both sides (handles DB duplicates from retried AI processing)
+  const dedupA = deduplicar(clausulasA)
+  const dedupB = deduplicar(clausulasB)
+
   const resultado = []
-  const usadasBGlobal = new Set()
+  const globalUsedB = new Set()
 
-  // Separa CCP (adendo) e regulares
-  const ccpA = clausulasA.filter(c => isCCP(c.numero))
-  const regA = clausulasA.filter(c => !isCCP(c.numero))
-  const ccpB = clausulasB.filter(c => isCCP(c.numero))
-  const regB = clausulasB.filter(c => !isCCP(c.numero))
+  // 2. Stage 1 — CCP adendo clauses match only among themselves
+  const ccpA = dedupA.filter(isCCP)
+  const ccpB = dedupB.filter(isCCP)
+  const { matched: ccpMatched, usedA: ccpUsedA, usedB: ccpUsedB } = matchGrupo(ccpA, ccpB, 0.25)
 
-  // Estágio 1: CCP vs CCP
-  const { matches: mCCP, usadasA: uACCP } = matchGrupo(ccpA, ccpB, usadasBGlobal)
-  for (const { cA, cB, score } of mCCP) {
-    resultado.push({ clausulaA: cA, clausulaB: cB, score, status: classificarSimilaridade(score) })
+  for (const { a, b, score } of ccpMatched) {
+    globalUsedB.add(b.id)
+    resultado.push({ clausulaA: a, clausulaB: b, score, status: classificarSimilaridade(score) })
   }
-  for (const cA of ccpA) {
-    if (!uACCP.has(cA.id)) {
-      resultado.push({ clausulaA: cA, clausulaB: null, score: 0,
-        status: { label: 'SUPRIMIDA', cls: 'bg-slate-100 text-slate-700', order: 4 } })
-    }
+  for (const c of ccpA) {
+    if (!ccpUsedA.has(c.id))
+      resultado.push({ clausulaA: c, clausulaB: null, score: 0, status: { label: 'SUPRIMIDA', cls: 'bg-slate-100 text-slate-700', order: 4 } })
   }
-
-  // Estágio 2: Regulares vs Regulares
-  const { matches: mReg, usadasA: uAReg } = matchGrupo(regA, regB, usadasBGlobal)
-  for (const { cA, cB, score } of mReg) {
-    resultado.push({ clausulaA: cA, clausulaB: cB, score, status: classificarSimilaridade(score) })
-  }
-  for (const cA of regA) {
-    if (!uAReg.has(cA.id)) {
-      resultado.push({ clausulaA: cA, clausulaB: null, score: 0,
-        status: { label: 'SUPRIMIDA', cls: 'bg-slate-100 text-slate-700', order: 4 } })
-    }
+  for (const c of ccpB) {
+    if (!ccpUsedB.has(c.id))
+      resultado.push({ clausulaA: null, clausulaB: c, score: 0, status: { label: 'NOVA', cls: 'bg-purple-100 text-purple-800', order: 5 } })
   }
 
-  // Novas: cláusulas B não usadas
-  for (const cB of clausulasB) {
-    if (!usadasBGlobal.has(cB.id)) {
-      resultado.push({ clausulaA: null, clausulaB: cB, score: 0,
-        status: { label: 'NOVA', cls: 'bg-purple-100 text-purple-800', order: 5 } })
-    }
+  // 3. Stage 2 — Regular clauses match only among themselves
+  const regA = dedupA.filter(c => !isCCP(c))
+  const regB = dedupB.filter(c => !isCCP(c))
+  const { matched: regMatched, usedA: regUsedA, usedB: regUsedB } = matchGrupo(regA, regB, 0.30)
+
+  for (const { a, b, score } of regMatched) {
+    globalUsedB.add(b.id)
+    resultado.push({ clausulaA: a, clausulaB: b, score, status: classificarSimilaridade(score) })
+  }
+  for (const c of regA) {
+    if (!regUsedA.has(c.id))
+      resultado.push({ clausulaA: c, clausulaB: null, score: 0, status: { label: 'SUPRIMIDA', cls: 'bg-slate-100 text-slate-700', order: 4 } })
+  }
+  for (const c of regB) {
+    if (!regUsedB.has(c.id))
+      resultado.push({ clausulaA: null, clausulaB: c, score: 0, status: { label: 'NOVA', cls: 'bg-purple-100 text-purple-800', order: 5 } })
   }
 
   return resultado
