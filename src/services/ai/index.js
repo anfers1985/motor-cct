@@ -2,7 +2,7 @@
 // v1.5.1 — Fix: erros visíveis, suporte gemini-2.5-flash (thinking), callback de progresso
 
 export const PROVEDORES = {
-  gemini: { label: 'Google Gemini', modelo_padrao: 'gemini-2.0-flash', suporta_pdf_nativo: true },
+  gemini: { label: 'Google Gemini', modelo_padrao: 'gemini-2.5-flash', suporta_pdf_nativo: true },
   claude: { label: 'Anthropic Claude', modelo_padrao: 'claude-haiku-4-5', suporta_pdf_nativo: true },
   openai: { label: 'OpenAI', modelo_padrao: 'gpt-4o-mini', suporta_pdf_nativo: false },
   groq: { label: 'Groq (Llama)', modelo_padrao: 'llama-3.3-70b-versatile', suporta_pdf_nativo: false },
