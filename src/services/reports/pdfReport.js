@@ -208,3 +208,26 @@ export function gerarPDFComparativo(resultado, instrumentoA, instrumentoB) {
   addFooter(doc, true)
   doc.save('comparativo_' + nomeA + '_vs_' + nomeB + '.pdf')
 }
+
+export function gerarPDFClausulas(clausulas, instrumento) {
+  const doc = new jsPDF({ unit: 'mm', format: 'a4' })
+  addHeader(doc,
+    (instrumento?.tipo || '') + ' — ' + (instrumento?.nome || 'Cláusulas'),
+    'Gerado em ' + new Date().toLocaleDateString('pt-BR') + ' | ' + clausulas.length + ' cláusula(s)'
+  )
+  doc.autoTable({
+    startY: 36,
+    head: [['Nº', 'Título', 'Categoria', 'Conteúdo']],
+    body: clausulas.map(c => [
+      c.numero || '',
+      c.titulo || '',
+      c.categoria || '',
+      (c.conteudo || '').slice(0, 600),
+    ]),
+    styles: { fontSize: 7.5, cellPadding: 1.5, overflow: 'linebreak', valign: 'top' },
+    headStyles: { fillColor: [26, 79, 255], textColor: 255, fontStyle: 'bold', fontSize: 8 },
+    columnStyles: { 0: { cellWidth: 18 }, 1: { cellWidth: 45 }, 2: { cellWidth: 30 }, 3: { cellWidth: 97 } },
+  })
+  addFooter(doc, false)
+  doc.save((instrumento?.nome || 'clausulas') + '_clausulas.pdf')
+}

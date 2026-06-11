@@ -219,3 +219,20 @@ export async function gerarExcelComparativo(resultado, instrumentoA, instrumento
 
   XLSX.writeFile(wb, 'comparativo_' + nomeA + '_vs_' + nomeB + '.xlsx')
 }
+
+export async function gerarExcelClausulas(clausulas, instrumento) {
+  const wb = XLSX.utils.book_new()
+  const rows = clausulas.map(c => ({
+    'Nº Cláusula': c.numero || '',
+    'Título': c.titulo || '',
+    'Categoria': c.categoria || '',
+    'Subcategoria': c.subcategoria || '',
+    'Conteúdo Integral': conteudoCompleto(c),
+    'Tags': (c.tags || []).join(', '),
+    'Observações': c.observacoes || '',
+  }))
+  const ws = XLSX.utils.json_to_sheet(rows)
+  ws['!cols'] = [{ wch: 18 },{ wch: 45 },{ wch: 25 },{ wch: 25 },{ wch: 100 },{ wch: 25 },{ wch: 60 }]
+  XLSX.utils.book_append_sheet(wb, ws, 'Cláusulas')
+  XLSX.writeFile(wb, (instrumento?.nome || 'clausulas') + '_clausulas.xlsx')
+}

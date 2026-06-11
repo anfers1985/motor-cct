@@ -21,7 +21,7 @@ function diffTexto(textoA, textoB) {
     else if(j>0&&(i===0||dp[i][j-1]>=dp[i-1][j])){ops.unshift({type:'add',val:wB[j-1]});j--}
     else{ops.unshift({type:'rem',val:wA[i-1]});i--}
   }
-  let ha='', hb=''
+  let ha='',hb=''
   for(const op of ops){
     if(op.type==='eq'){ha+=op.val;hb+=op.val}
     else if(op.type==='rem') ha+=`<mark class="diff-rem">${op.val}</mark>`
@@ -36,6 +36,12 @@ function DiffText({html}) {
 
 const STATUS_ORDER = ['INALTERADA','ALTERADA','SUPRIMIDA','NOVA']
 const STATUS_ORDER_NUM = {INALTERADA:0,ALTERADA:1,SUPRIMIDA:2,NOVA:3}
+const STATUS_CLS = {
+  INALTERADA:'bg-emerald-100 text-emerald-800 border-emerald-300',
+  ALTERADA:'bg-blue-100 text-blue-800 border-blue-300',
+  SUPRIMIDA:'bg-slate-100 text-slate-700 border-slate-300',
+  NOVA:'bg-purple-100 text-purple-800 border-purple-300',
+}
 
 export default function Comparativo() {
   const { user } = useAuth()
@@ -46,15 +52,15 @@ export default function Comparativo() {
   const [filtroOperacao, setFiltroOperacao] = useState('')
   const [instA, setInstA] = useState('')
   const [instB, setInstB] = useState('')
-  const [resultado,   setResultado]   = useState(null)
-  const [loading,     setLoading]     = useState(false)
-  const [filtroStatus,setFiltroStatus]= useState('')
-  const [busca,       setBusca]       = useState('')
-  const [mostrarDiff, setMostrarDiff] = useState(true)
-  const [ordenacao,   setOrdenacao]   = useState('original') // 'original' | 'numA_asc' | 'numA_desc' | 'status'
-  // Expand/collapse: modoExpandido=true → todos abertos exceto os em expandidos; false → todos fechados exceto os em expandidos
-  const [expandidos,     setExpandidos]     = useState(new Set())
-  const [modoExpandido,  setModoExpandido]  = useState(false)
+  const [resultado,    setResultado]    = useState(null)
+  const [loading,      setLoading]      = useState(false)
+  const [busca,        setBusca]        = useState('')
+  const [mostrarDiff,  setMostrarDiff]  = useState(true)
+  const [ordenacao,    setOrdenacao]    = useState('original')
+  const [statusAtivos, setStatusAtivos] = useState(new Set(STATUS_ORDER))
+  const [expandidos,   setExpandidos]   = useState(new Set())
+  const [modoExpandido,setModoExpandido]= useState(false)
+  const [selecionados, setSelecionados] = useState(new Set())
 
   useEffect(() => {
     if (!user) return
@@ -70,6 +76,9 @@ export default function Comparativo() {
     })
   },[user])
 
+  // Reset seleção quando filtros mudam
+  useEffect(() => setSelecionados(new Set()), [statusAtivos, busca, ordenacao])
+
   const instrumentosFiltrados = todosInstrumentos.filter(i=>{
     if(filtroEmpresa  && i.empresa_id  !== filtroEmpresa)  return false
     if(filtroOperacao && i.operacao_id !== filtroOperacao) return false
@@ -79,12 +88,13 @@ export default function Comparativo() {
   async function comparar() {
     if(!instA||!instB) return alert('Selecione dois instrumentos')
     if(instA===instB)  return alert('Selecione instrumentos diferentes')
-    setLoading(true); setResultado(null); setExpandidos(new Set()); setModoExpandido(false)
+    setLoading(true); setResultado(null); setExpandidos(new Set()); setModoExpandido(false); setSelecionados(new Set())
     const [{data:cA},{data:cB}] = await Promise.all([
       supabase.from('clausulas').select('*').eq('instrumento_id',instA).order('numero'),
       supabase.from('clausulas').select('*').eq('instrumento_id',instB).order('numero'),
     ])
     setResultado(compararInstrumentos(cA||[],cB||[]))
+    setStatusAtivos(new Set(STATUS_ORDER))
     setLoading(false)
   }
 
@@ -92,36 +102,71 @@ export default function Comparativo() {
   const iB = todosInstrumentos.find(i=>i.id===instB)
 
   // Ordenação
-  function sortKey(r) { return toNumeroOrdinal(r.clausulaA?.numero || r.clausulaB?.numero) }
+  function sortKey(r, lado) {
+    const num = lado === 'B' ? r.clausulaB?.numero : r.clausulaA?.numero
+    return toNumeroOrdinal(num || r.clausulaA?.numero || r.clausulaB?.numero)
+  }
   const resultadoOrdenado = (() => {
     if (!resultado) return []
     switch(ordenacao) {
-      case 'numA_asc':  return [...resultado].sort((a,b)=>sortKey(a)-sortKey(b))
-      case 'numA_desc': return [...resultado].sort((a,b)=>sortKey(b)-sortKey(a))
+      case 'numA_asc':  return [...resultado].sort((a,b)=>sortKey(a,'A')-sortKey(b,'A'))
+      case 'numA_desc': return [...resultado].sort((a,b)=>sortKey(b,'A')-sortKey(a,'A'))
+      case 'numB_asc':  return [...resultado].sort((a,b)=>sortKey(a,'B')-sortKey(b,'B'))
+      case 'numB_desc': return [...resultado].sort((a,b)=>sortKey(b,'B')-sortKey(a,'B'))
       case 'status':    return [...resultado].sort((a,b)=>(STATUS_ORDER_NUM[a.status.label]??9)-(STATUS_ORDER_NUM[b.status.label]??9))
       default:          return resultado
     }
   })()
 
-  const filtrado = resultadoOrdenado.filter(r=>{
-    const q=busca.toLowerCase()
-    return (!filtroStatus||r.status.label===filtroStatus)
-      && (!q||r.clausulaA?.titulo?.toLowerCase().includes(q)||r.clausulaB?.titulo?.toLowerCase().includes(q))
+  const filtrado = resultadoOrdenado.filter(r => {
+    const q = busca.toLowerCase()
+    return statusAtivos.has(r.status.label)
+      && (!q || r.clausulaA?.titulo?.toLowerCase().includes(q) || r.clausulaB?.titulo?.toLowerCase().includes(q))
   })
 
   const stats = resultado ? resultado.reduce((acc,r)=>{ acc[r.status.label]=(acc[r.status.label]||0)+1; return acc },{}) : {}
 
-  // Expand/collapse individual
+  // Toggle multi-select status
+  function toggleStatus(s) {
+    setStatusAtivos(prev => {
+      const n = new Set(prev)
+      if (n.has(s)) {
+        if (n.size === 1) return n  // nunca deixa vazio
+        n.delete(s)
+      } else {
+        n.add(s)
+      }
+      return n
+    })
+  }
+
+  // Expand/collapse
   function toggleCard(idx) {
     setExpandidos(prev=>{ const n=new Set(prev); n.has(idx)?n.delete(idx):n.add(idx); return n })
   }
-  function toggleExpandAll() {
-    setModoExpandido(v=>!v); setExpandidos(new Set())
+  function toggleExpandAll() { setModoExpandido(v=>!v); setExpandidos(new Set()) }
+  const isExpanded = idx => modoExpandido ? !expandidos.has(idx) : expandidos.has(idx)
+
+  // Seleção
+  function toggleSelecionado(idx) {
+    setSelecionados(prev=>{ const n=new Set(prev); n.has(idx)?n.delete(idx):n.add(idx); return n })
   }
-  const isExpanded = (idx) => modoExpandido ? !expandidos.has(idx) : expandidos.has(idx)
+  const todosSelecionados = filtrado.length > 0 && filtrado.every((_,i)=>selecionados.has(i))
+  function toggleSelecionarTodos() {
+    todosSelecionados ? setSelecionados(new Set()) : setSelecionados(new Set(filtrado.map((_,i)=>i)))
+  }
+
+  // Exportar (com ou sem seleção)
+  function exportar(tipo) {
+    const itens = selecionados.size > 0
+      ? filtrado.filter((_,i)=>selecionados.has(i))
+      : filtrado
+    if (tipo==='excel') gerarExcelComparativo(itens, iA, iB)
+    else gerarPDFComparativo(itens, iA, iB)
+  }
 
   return (
-    <div>
+    <div className="pb-24">
       <style>{`
         mark.diff-rem{background:#ede9fe;color:#5b21b6;border-radius:2px;padding:0 1px;text-decoration:line-through;text-decoration-color:#7c3aed}
         mark.diff-add{background:#dcfce7;color:#166534;border-radius:2px;padding:0 1px}
@@ -194,15 +239,22 @@ export default function Comparativo() {
 
       {resultado&&(
         <>
-          {/* Contadores por status */}
-          <div className="grid grid-cols-4 gap-2 mb-5">
-            {STATUS_ORDER.map(s=>(
-              <button key={s} onClick={()=>setFiltroStatus(filtroStatus===s?'':s)}
-                className={'p-2 rounded-lg border text-center transition-all '+(filtroStatus===s?'border-brand-400 bg-brand-50':'border-slate-200 bg-white hover:bg-surface-50')}>
-                <p className="text-lg font-bold text-slate-700">{stats[s]||0}</p>
-                <p className="text-[10px] text-slate-500 leading-tight">{s}</p>
-              </button>
-            ))}
+          {/* Multi-select status — clique para ativar/desativar cada tipo */}
+          <div className="mb-4">
+            <p className="text-xs text-slate-400 mb-2">Filtrar por tipo (clique para ativar/desativar — múltiplos permitidos):</p>
+            <div className="grid grid-cols-4 gap-2">
+              {STATUS_ORDER.map(s=>(
+                <button key={s} onClick={()=>toggleStatus(s)}
+                  className={'p-2 rounded-lg border-2 text-center transition-all select-none '+(
+                    statusAtivos.has(s)
+                      ? STATUS_CLS[s] + ' shadow-sm'
+                      : 'border-slate-200 bg-white opacity-40 hover:opacity-60'
+                  )}>
+                  <p className="text-lg font-bold">{stats[s]||0}</p>
+                  <p className="text-[10px] font-medium leading-tight">{s}</p>
+                </button>
+              ))}
+            </div>
           </div>
 
           {mostrarDiff&&(
@@ -212,37 +264,54 @@ export default function Comparativo() {
             </div>
           )}
 
-          {/* Barra de ferramentas: busca + ordenação + expand/collapse + exportar */}
-          <div className="flex gap-2 mb-4 flex-wrap items-center">
-            <input className="input max-w-xs" placeholder="Buscar por título..." value={busca} onChange={e=>setBusca(e.target.value)}/>
-
+          {/* Barra de ferramentas */}
+          <div className="flex gap-2 mb-3 flex-wrap items-center">
+            <input className="input max-w-xs text-sm" placeholder="Buscar por título..." value={busca} onChange={e=>setBusca(e.target.value)}/>
             <select className="input w-auto text-xs" value={ordenacao} onChange={e=>setOrdenacao(e.target.value)}>
               <option value="original">Ordem original</option>
-              <option value="numA_asc">Nº cláusula A — crescente</option>
-              <option value="numA_desc">Nº cláusula A — decrescente</option>
-              <option value="status">Por tipo de modificação</option>
+              <option value="numA_asc">Nº A — crescente</option>
+              <option value="numA_desc">Nº A — decrescente</option>
+              <option value="numB_asc">Nº B — crescente</option>
+              <option value="numB_desc">Nº B — decrescente</option>
+              <option value="status">Por tipo</option>
             </select>
-
             <button className="btn-secondary text-xs" onClick={toggleExpandAll}>
               {modoExpandido?'📕 Recolher tudo':'📖 Expandir tudo'}
             </button>
-
-            <button className="btn-secondary text-xs" onClick={()=>gerarExcelComparativo(resultado,iA,iB)}>📊 Excel</button>
-            <button className="btn-secondary text-xs" onClick={()=>gerarPDFComparativo(resultado,iA,iB)}>📄 PDF</button>
+            <button className="btn-secondary text-xs" onClick={()=>exportar('excel')}>
+              📊 {selecionados.size>0?`Excel (${selecionados.size})` :'Excel'}
+            </button>
+            <button className="btn-secondary text-xs" onClick={()=>exportar('pdf')}>
+              📄 {selecionados.size>0?`PDF (${selecionados.size})` :'PDF'}
+            </button>
           </div>
 
-          {/* Lista de cláusulas */}
+          {/* Selecionar tudo */}
+          <div className="flex items-center gap-2 mb-2 px-3 py-1.5 bg-slate-50 rounded-lg text-xs text-slate-500">
+            <input type="checkbox" checked={todosSelecionados} onChange={toggleSelecionarTodos} className="w-4 h-4 cursor-pointer"/>
+            <span>{todosSelecionados?'Desselecionar tudo':'Selecionar tudo'} — {filtrado.length} visíveis</span>
+            {selecionados.size>0&&<span className="ml-auto text-brand-600 font-medium">{selecionados.size} selecionada(s)</span>}
+          </div>
+
+          {/* Lista */}
           <div className="space-y-2">
             {filtrado.map((r,idx)=>{
               const diff = mostrarDiff&&r.status.label==='ALTERADA'
                 ? diffTexto(r.clausulaA?.conteudo||'',r.clausulaB?.conteudo||'')
                 : null
               const expanded = isExpanded(idx)
+              const selected = selecionados.has(idx)
 
               return (
-                <div key={idx} className="card overflow-hidden">
-                  <button className="w-full text-left p-3 hover:bg-surface-50 transition-colors" onClick={()=>toggleCard(idx)}>
+                <div key={idx} className={'card overflow-hidden transition-all '+(selected?'ring-2 ring-brand-400':'')}>
+                  <div className="w-full text-left p-3 hover:bg-surface-50 transition-colors cursor-pointer"
+                    onClick={()=>toggleCard(idx)}>
                     <div className="flex items-center gap-3">
+                      {/* Checkbox de seleção */}
+                      <input type="checkbox" checked={selected}
+                        onChange={()=>toggleSelecionado(idx)}
+                        onClick={e=>e.stopPropagation()}
+                        className="w-4 h-4 flex-shrink-0 cursor-pointer accent-blue-600"/>
                       <span className={'text-xs px-2 py-0.5 rounded-full font-medium flex-shrink-0 '+r.status.cls}>{r.status.label}</span>
                       <div className="grid grid-cols-2 gap-4 flex-1 min-w-0">
                         <p className="text-sm text-slate-700 truncate">
@@ -252,9 +321,9 @@ export default function Comparativo() {
                           {r.clausulaB?(r.clausulaB.numero?r.clausulaB.numero+' — ':'')+r.clausulaB.titulo:<span className="text-slate-400 italic">—</span>}
                         </p>
                       </div>
-                      <span className="text-slate-300 text-sm">{expanded?'▲':'▼'}</span>
+                      <span className="text-slate-300 text-sm flex-shrink-0">{expanded?'▲':'▼'}</span>
                     </div>
-                  </button>
+                  </div>
 
                   {expanded&&(
                     <div className="border-t border-slate-100 grid grid-cols-2 divide-x divide-slate-100">
@@ -283,6 +352,16 @@ export default function Comparativo() {
             })}
           </div>
         </>
+      )}
+
+      {/* Barra flutuante de exportar selecionados */}
+      {selecionados.size>0&&(
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-slate-800 text-white rounded-2xl px-5 py-3 flex items-center gap-3 shadow-2xl z-50 border border-slate-700">
+          <span className="text-sm font-semibold">{selecionados.size} cláusula(s) selecionada(s)</span>
+          <button onClick={()=>exportar('excel')} className="text-xs bg-white/15 hover:bg-white/25 px-3 py-1.5 rounded-lg transition-colors">📊 Excel</button>
+          <button onClick={()=>exportar('pdf')}   className="text-xs bg-white/15 hover:bg-white/25 px-3 py-1.5 rounded-lg transition-colors">📄 PDF</button>
+          <button onClick={()=>setSelecionados(new Set())} className="text-xs opacity-60 hover:opacity-100 ml-1 transition-colors">✕ Limpar</button>
+        </div>
       )}
     </div>
   )
