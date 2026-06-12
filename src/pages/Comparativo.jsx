@@ -45,13 +45,24 @@ const STATUS_CLS = {
 
 export default function Comparativo() {
   const { user } = useAuth()
+
+  // Dados de referência
   const [todosInstrumentos, setTodosInstrumentos] = useState([])
-  const [empresas,  setEmpresas]  = useState([])
-  const [operacoes, setOperacoes] = useState([])
-  const [filtroEmpresa,  setFiltroEmpresa]  = useState('')
+  const [empresas,   setEmpresas]   = useState([])
+  const [operacoes,  setOperacoes]  = useState([])
+  const [sindicatos, setSindicatos] = useState([])
+
+  // Filtros de busca de instrumento
+  const [buscaEmpresa,   setBuscaEmpresa]   = useState('')
   const [filtroOperacao, setFiltroOperacao] = useState('')
+  const [filtroSindLab,  setFiltroSindLab]  = useState('')
+  const [filtroSindPat,  setFiltroSindPat]  = useState('')
+
+  // Seleção dos instrumentos A e B
   const [instA, setInstA] = useState('')
   const [instB, setInstB] = useState('')
+
+  // Resultado e controles
   const [resultado,    setResultado]    = useState(null)
   const [loading,      setLoading]      = useState(false)
   const [busca,        setBusca]        = useState('')
@@ -65,43 +76,69 @@ export default function Comparativo() {
   useEffect(() => {
     if (!user) return
     Promise.all([
-      supabase.from('instrumentos').select('id,nome,tipo,vigencia_inicio,vigencia_fim,empresa_id,operacao_id')
-        .eq('user_id',user.id).eq('status_processamento','processado').order('nome'),
-      supabase.from('empresas').select('id,razao_social').eq('user_id',user.id).order('razao_social'),
-      supabase.from('operacoes').select('id,nome').eq('user_id',user.id).order('nome'),
-    ]).then(([{data:insts},{data:emps},{data:ops}])=>{
-      setTodosInstrumentos(insts||[])
-      setEmpresas(emps||[])
-      setOperacoes(ops||[])
+      supabase.from('instrumentos')
+        .select('id,nome,tipo,vigencia_inicio,vigencia_fim,empresa_id,operacao_id,sindicato_laboral_id,sindicato_patronal_id')
+        .eq('user_id', user.id).eq('status_processamento', 'processado').order('nome'),
+      supabase.from('empresas').select('id,razao_social,cnpj').eq('user_id', user.id).order('razao_social'),
+      supabase.from('operacoes').select('id,nome').eq('user_id', user.id).order('nome'),
+      supabase.from('sindicatos').select('id,razao_social,sigla').eq('user_id', user.id).order('razao_social'),
+    ]).then(([{data:insts},{data:emps},{data:ops},{data:sinds}]) => {
+      setTodosInstrumentos(insts || [])
+      setEmpresas(emps || [])
+      setOperacoes(ops || [])
+      setSindicatos(sinds || [])
     })
-  },[user])
+  }, [user])
 
-  // Reset seleção quando filtros mudam
   useEffect(() => setSelecionados(new Set()), [statusAtivos, busca, ordenacao])
 
-  const instrumentosFiltrados = todosInstrumentos.filter(i=>{
-    if(filtroEmpresa  && i.empresa_id  !== filtroEmpresa)  return false
-    if(filtroOperacao && i.operacao_id !== filtroOperacao) return false
+  // Mapa rápido para lookup de empresa
+  const empMap = Object.fromEntries(empresas.map(e => [e.id, e]))
+
+  // Instrumentos filtrados
+  const instrumentosFiltrados = todosInstrumentos.filter(i => {
+    if (buscaEmpresa) {
+      const emp = empMap[i.empresa_id]
+      const q = buscaEmpresa.toLowerCase()
+      const cnpjQ = buscaEmpresa.replace(/\D/g, '')
+      const nomeMatch = emp?.razao_social?.toLowerCase().includes(q)
+      const cnpjMatch = cnpjQ.length >= 3 && (emp?.cnpj || '').replace(/\D/g, '').includes(cnpjQ)
+      if (!nomeMatch && !cnpjMatch) return false
+    }
+    if (filtroOperacao && i.operacao_id !== filtroOperacao) return false
+    if (filtroSindLab  && i.sindicato_laboral_id  !== filtroSindLab)  return false
+    if (filtroSindPat  && i.sindicato_patronal_id !== filtroSindPat)  return false
     return true
   })
 
+  // Limpa A/B se saírem da lista filtrada
+  useEffect(() => {
+    if (instA && !instrumentosFiltrados.some(i => i.id === instA)) setInstA('')
+    if (instB && !instrumentosFiltrados.some(i => i.id === instB)) setInstB('')
+  }, [instrumentosFiltrados.length])
+
   async function comparar() {
-    if(!instA||!instB) return alert('Selecione dois instrumentos')
-    if(instA===instB)  return alert('Selecione instrumentos diferentes')
+    if (!instA || !instB) return alert('Selecione dois instrumentos')
+    if (instA === instB)  return alert('Selecione instrumentos diferentes')
     setLoading(true); setResultado(null); setExpandidos(new Set()); setModoExpandido(false); setSelecionados(new Set())
     const [{data:cA},{data:cB}] = await Promise.all([
-      supabase.from('clausulas').select('*').eq('instrumento_id',instA).order('numero'),
-      supabase.from('clausulas').select('*').eq('instrumento_id',instB).order('numero'),
+      supabase.from('clausulas').select('*').eq('instrumento_id', instA).order('numero'),
+      supabase.from('clausulas').select('*').eq('instrumento_id', instB).order('numero'),
     ])
-    setResultado(compararInstrumentos(cA||[],cB||[]))
+    setResultado(compararInstrumentos(cA || [], cB || []))
     setStatusAtivos(new Set(STATUS_ORDER))
     setLoading(false)
   }
 
-  const iA = todosInstrumentos.find(i=>i.id===instA)
-  const iB = todosInstrumentos.find(i=>i.id===instB)
+  const iA = todosInstrumentos.find(i => i.id === instA)
+  const iB = todosInstrumentos.find(i => i.id === instB)
 
-  // Ordenação
+  // Label do instrumento com empresa
+  function instLabel(i) {
+    const emp = empMap[i.empresa_id]
+    return `${i.tipo} — ${i.nome}${emp ? ` · ${emp.razao_social}` : ''}`
+  }
+
   function sortKey(r, lado) {
     const num = lado === 'B' ? r.clausulaB?.numero : r.clausulaA?.numero
     return toNumeroOrdinal(num || r.clausulaA?.numero || r.clausulaB?.numero)
@@ -124,45 +161,39 @@ export default function Comparativo() {
       && (!q || r.clausulaA?.titulo?.toLowerCase().includes(q) || r.clausulaB?.titulo?.toLowerCase().includes(q))
   })
 
-  const stats = resultado ? resultado.reduce((acc,r)=>{ acc[r.status.label]=(acc[r.status.label]||0)+1; return acc },{}) : {}
+  const stats = resultado ? resultado.reduce((acc,r) => { acc[r.status.label]=(acc[r.status.label]||0)+1; return acc }, {}) : {}
 
-  // Toggle multi-select status
   function toggleStatus(s) {
     setStatusAtivos(prev => {
       const n = new Set(prev)
-      if (n.has(s)) {
-        if (n.size === 1) return n  // nunca deixa vazio
-        n.delete(s)
-      } else {
-        n.add(s)
-      }
+      if (n.has(s)) { if (n.size === 1) return n; n.delete(s) } else n.add(s)
       return n
     })
   }
 
-  // Expand/collapse
   function toggleCard(idx) {
-    setExpandidos(prev=>{ const n=new Set(prev); n.has(idx)?n.delete(idx):n.add(idx); return n })
+    setExpandidos(prev => { const n=new Set(prev); n.has(idx)?n.delete(idx):n.add(idx); return n })
   }
-  function toggleExpandAll() { setModoExpandido(v=>!v); setExpandidos(new Set()) }
+  function toggleExpandAll() { setModoExpandido(v => !v); setExpandidos(new Set()) }
   const isExpanded = idx => modoExpandido ? !expandidos.has(idx) : expandidos.has(idx)
 
-  // Seleção
   function toggleSelecionado(idx) {
-    setSelecionados(prev=>{ const n=new Set(prev); n.has(idx)?n.delete(idx):n.add(idx); return n })
+    setSelecionados(prev => { const n=new Set(prev); n.has(idx)?n.delete(idx):n.add(idx); return n })
   }
-  const todosSelecionados = filtrado.length > 0 && filtrado.every((_,i)=>selecionados.has(i))
+  const todosSelecionados = filtrado.length > 0 && filtrado.every((_,i) => selecionados.has(i))
   function toggleSelecionarTodos() {
-    todosSelecionados ? setSelecionados(new Set()) : setSelecionados(new Set(filtrado.map((_,i)=>i)))
+    todosSelecionados ? setSelecionados(new Set()) : setSelecionados(new Set(filtrado.map((_,i) => i)))
   }
 
-  // Exportar (com ou sem seleção)
   function exportar(tipo) {
-    const itens = selecionados.size > 0
-      ? filtrado.filter((_,i)=>selecionados.has(i))
-      : filtrado
-    if (tipo==='excel') gerarExcelComparativo(itens, iA, iB)
+    const itens = selecionados.size > 0 ? filtrado.filter((_,i) => selecionados.has(i)) : filtrado
+    if (tipo === 'excel') gerarExcelComparativo(itens, iA, iB)
     else gerarPDFComparativo(itens, iA, iB)
+  }
+
+  const temFiltro = buscaEmpresa || filtroOperacao || filtroSindLab || filtroSindPat
+  function limparFiltros() {
+    setBuscaEmpresa(''); setFiltroOperacao(''); setFiltroSindLab(''); setFiltroSindPat('')
   }
 
   return (
@@ -174,100 +205,114 @@ export default function Comparativo() {
 
       <div className="mb-6">
         <h1 className="font-display font-bold text-2xl text-slate-800">Comparativo de Instrumentos</h1>
-        <p className="text-slate-500 text-sm">Compare dois instrumentos cláusula a cláusula com destaque visual das diferenças</p>
+        <p className="text-slate-500 text-sm">Compare dois instrumentos cláusula a cláusula — incluindo de empresas ou sindicatos diferentes</p>
       </div>
 
-      {/* Filtros empresa/operação */}
+      {/* Filtros para encontrar instrumentos */}
       <div className="card p-4 mb-4">
-        <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">Filtrar instrumentos por</p>
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <label className="label">Empresa</label>
-            <select className="input" value={filtroEmpresa} onChange={e=>{setFiltroEmpresa(e.target.value);setInstA('');setInstB('')}}>
-              <option value="">Todas as empresas</option>
-              {empresas.map(e=><option key={e.id} value={e.id}>{e.razao_social}</option>)}
-            </select>
+        <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">Encontrar instrumentos por</p>
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          <div className="lg:col-span-2">
+            <label className="label">Empresa (nome ou CNPJ)</label>
+            <input className="input" placeholder="Ex: Transportadora XYZ ou 12.345.678/0001"
+              value={buscaEmpresa} onChange={e => { setBuscaEmpresa(e.target.value) }}/>
           </div>
           <div>
             <label className="label">Operação</label>
-            <select className="input" value={filtroOperacao} onChange={e=>{setFiltroOperacao(e.target.value);setInstA('');setInstB('')}}>
-              <option value="">Todas as operações</option>
-              {operacoes.map(o=><option key={o.id} value={o.id}>{o.nome}</option>)}
+            <select className="input" value={filtroOperacao} onChange={e => setFiltroOperacao(e.target.value)}>
+              <option value="">Todas</option>
+              {operacoes.map(o => <option key={o.id} value={o.id}>{o.nome}</option>)}
             </select>
           </div>
+          <div className="flex items-end">
+            {temFiltro
+              ? <button className="btn-secondary text-xs w-full" onClick={limparFiltros}>✕ Limpar filtros</button>
+              : <p className="text-xs text-slate-400 pb-2">Sem filtros — todos os instrumentos visíveis</p>
+            }
+          </div>
+          <div>
+            <label className="label">Sindicato Laboral</label>
+            <select className="input" value={filtroSindLab} onChange={e => setFiltroSindLab(e.target.value)}>
+              <option value="">Todos</option>
+              {sindicatos.map(s => <option key={s.id} value={s.id}>{s.sigla ? s.sigla + ' — ' : ''}{s.razao_social}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="label">Sindicato Patronal</label>
+            <select className="input" value={filtroSindPat} onChange={e => setFiltroSindPat(e.target.value)}>
+              <option value="">Todos</option>
+              {sindicatos.map(s => <option key={s.id} value={s.id}>{s.sigla ? s.sigla + ' — ' : ''}{s.razao_social}</option>)}
+            </select>
+          </div>
+          {temFiltro && (
+            <div className="lg:col-span-2 flex items-center">
+              <p className="text-xs text-brand-600">{instrumentosFiltrados.length} instrumento(s) encontrado(s)</p>
+            </div>
+          )}
         </div>
-        {(filtroEmpresa||filtroOperacao)&&(
-          <p className="text-xs text-brand-600 mt-2">
-            {instrumentosFiltrados.length} instrumento(s) encontrado(s) —{' '}
-            <button className="underline" onClick={()=>{setFiltroEmpresa('');setFiltroOperacao('');setInstA('');setInstB('')}}>limpar filtros</button>
-          </p>
-        )}
       </div>
 
-      {/* Seleção dos instrumentos */}
+      {/* Seleção dos instrumentos A e B */}
       <div className="card p-5 mb-5">
         <div className="grid grid-cols-2 gap-4 mb-4">
           <div>
             <label className="label">Instrumento A — Anterior / Referência</label>
-            <select className="input" value={instA} onChange={e=>setInstA(e.target.value)}>
+            <select className="input" value={instA} onChange={e => setInstA(e.target.value)}>
               <option value="">Selecione...</option>
-              {instrumentosFiltrados.map(i=><option key={i.id} value={i.id}>{i.tipo} — {i.nome}</option>)}
+              {instrumentosFiltrados.map(i => <option key={i.id} value={i.id}>{instLabel(i)}</option>)}
             </select>
-            {iA&&<p className="text-xs text-slate-400 mt-1">Vigência: {iA.vigencia_inicio} a {iA.vigencia_fim}</p>}
+            {iA && <p className="text-xs text-slate-400 mt-1">Vigência: {iA.vigencia_inicio} a {iA.vigencia_fim}</p>}
           </div>
           <div>
             <label className="label">Instrumento B — Atual / Novo</label>
-            <select className="input" value={instB} onChange={e=>setInstB(e.target.value)}>
+            <select className="input" value={instB} onChange={e => setInstB(e.target.value)}>
               <option value="">Selecione...</option>
-              {instrumentosFiltrados.map(i=><option key={i.id} value={i.id}>{i.tipo} — {i.nome}</option>)}
+              {instrumentosFiltrados.map(i => <option key={i.id} value={i.id}>{instLabel(i)}</option>)}
             </select>
-            {iB&&<p className="text-xs text-slate-400 mt-1">Vigência: {iB.vigencia_inicio} a {iB.vigencia_fim}</p>}
+            {iB && <p className="text-xs text-slate-400 mt-1">Vigência: {iB.vigencia_inicio} a {iB.vigencia_fim}</p>}
           </div>
         </div>
         <div className="flex gap-3 items-center flex-wrap">
-          <button className="btn-primary" onClick={comparar} disabled={loading||!instA||!instB}>
-            {loading?'⏳ Comparando...':'⚖️ Comparar Instrumentos'}
+          <button className="btn-primary" onClick={comparar} disabled={loading || !instA || !instB}>
+            {loading ? '⏳ Comparando...' : '⚖️ Comparar Instrumentos'}
           </button>
-          {resultado&&(
+          {resultado && (
             <label className="flex items-center gap-2 text-xs text-slate-600 cursor-pointer">
-              <input type="checkbox" checked={mostrarDiff} onChange={e=>setMostrarDiff(e.target.checked)}/>
+              <input type="checkbox" checked={mostrarDiff} onChange={e => setMostrarDiff(e.target.checked)}/>
               Destacar diferenças (roxo = removido | verde = adicionado)
             </label>
           )}
         </div>
       </div>
 
-      {resultado&&(
+      {resultado && (
         <>
-          {/* Multi-select status — clique para ativar/desativar cada tipo */}
+          {/* Multi-select status */}
           <div className="mb-4">
             <p className="text-xs text-slate-400 mb-2">Filtrar por tipo (clique para ativar/desativar — múltiplos permitidos):</p>
             <div className="grid grid-cols-4 gap-2">
-              {STATUS_ORDER.map(s=>(
-                <button key={s} onClick={()=>toggleStatus(s)}
-                  className={'p-2 rounded-lg border-2 text-center transition-all select-none '+(
-                    statusAtivos.has(s)
-                      ? STATUS_CLS[s] + ' shadow-sm'
-                      : 'border-slate-200 bg-white opacity-40 hover:opacity-60'
+              {STATUS_ORDER.map(s => (
+                <button key={s} onClick={() => toggleStatus(s)}
+                  className={'p-2 rounded-lg border-2 text-center transition-all select-none ' + (
+                    statusAtivos.has(s) ? STATUS_CLS[s] + ' shadow-sm' : 'border-slate-200 bg-white opacity-40 hover:opacity-60'
                   )}>
-                  <p className="text-lg font-bold">{stats[s]||0}</p>
+                  <p className="text-lg font-bold">{stats[s] || 0}</p>
                   <p className="text-[10px] font-medium leading-tight">{s}</p>
                 </button>
               ))}
             </div>
           </div>
 
-          {mostrarDiff&&(
+          {mostrarDiff && (
             <div className="flex gap-4 mb-3 text-xs text-slate-500">
               <span><mark style={{background:'#ede9fe',color:'#5b21b6',borderRadius:'2px',padding:'0 3px',textDecoration:'line-through'}}>texto removido</mark> = estava no instrumento A</span>
               <span><mark style={{background:'#dcfce7',color:'#166534',borderRadius:'2px',padding:'0 3px'}}>texto adicionado</mark> = é novo no instrumento B</span>
             </div>
           )}
 
-          {/* Barra de ferramentas */}
           <div className="flex gap-2 mb-3 flex-wrap items-center">
-            <input className="input max-w-xs text-sm" placeholder="Buscar por título..." value={busca} onChange={e=>setBusca(e.target.value)}/>
-            <select className="input w-auto text-xs" value={ordenacao} onChange={e=>setOrdenacao(e.target.value)}>
+            <input className="input max-w-xs text-sm" placeholder="Buscar por título..." value={busca} onChange={e => setBusca(e.target.value)}/>
+            <select className="input w-auto text-xs" value={ordenacao} onChange={e => setOrdenacao(e.target.value)}>
               <option value="original">Ordem original</option>
               <option value="numA_asc">Nº A — crescente</option>
               <option value="numA_desc">Nº A — decrescente</option>
@@ -276,74 +321,71 @@ export default function Comparativo() {
               <option value="status">Por tipo</option>
             </select>
             <button className="btn-secondary text-xs" onClick={toggleExpandAll}>
-              {modoExpandido?'📕 Recolher tudo':'📖 Expandir tudo'}
+              {modoExpandido ? '📕 Recolher tudo' : '📖 Expandir tudo'}
             </button>
-            <button className="btn-secondary text-xs" onClick={()=>exportar('excel')}>
-              📊 {selecionados.size>0?`Excel (${selecionados.size})` :'Excel'}
+            <button className="btn-secondary text-xs" onClick={() => exportar('excel')}>
+              📊 {selecionados.size > 0 ? `Excel (${selecionados.size})` : 'Excel'}
             </button>
-            <button className="btn-secondary text-xs" onClick={()=>exportar('pdf')}>
-              📄 {selecionados.size>0?`PDF (${selecionados.size})` :'PDF'}
+            <button className="btn-secondary text-xs" onClick={() => exportar('pdf')}>
+              📄 {selecionados.size > 0 ? `PDF (${selecionados.size})` : 'PDF'}
             </button>
           </div>
 
-          {/* Selecionar tudo */}
           <div className="flex items-center gap-2 mb-2 px-3 py-1.5 bg-slate-50 rounded-lg text-xs text-slate-500">
             <input type="checkbox" checked={todosSelecionados} onChange={toggleSelecionarTodos} className="w-4 h-4 cursor-pointer"/>
-            <span>{todosSelecionados?'Desselecionar tudo':'Selecionar tudo'} — {filtrado.length} visíveis</span>
-            {selecionados.size>0&&<span className="ml-auto text-brand-600 font-medium">{selecionados.size} selecionada(s)</span>}
+            <span>{todosSelecionados ? 'Desselecionar tudo' : 'Selecionar tudo'} — {filtrado.length} visíveis</span>
+            {selecionados.size > 0 && <span className="ml-auto text-brand-600 font-medium">{selecionados.size} selecionada(s)</span>}
           </div>
 
-          {/* Lista */}
           <div className="space-y-2">
-            {filtrado.map((r,idx)=>{
-              const diff = mostrarDiff&&r.status.label==='ALTERADA'
-                ? diffTexto(r.clausulaA?.conteudo||'',r.clausulaB?.conteudo||'')
+            {filtrado.map((r, idx) => {
+              const diff = mostrarDiff && r.status.label === 'ALTERADA'
+                ? diffTexto(r.clausulaA?.conteudo || '', r.clausulaB?.conteudo || '')
                 : null
               const expanded = isExpanded(idx)
               const selected = selecionados.has(idx)
 
               return (
-                <div key={idx} className={'card overflow-hidden transition-all '+(selected?'ring-2 ring-brand-400':'')}>
+                <div key={idx} className={'card overflow-hidden transition-all ' + (selected ? 'ring-2 ring-brand-400' : '')}>
                   <div className="w-full text-left p-3 hover:bg-surface-50 transition-colors cursor-pointer"
-                    onClick={()=>toggleCard(idx)}>
+                    onClick={() => toggleCard(idx)}>
                     <div className="flex items-center gap-3">
-                      {/* Checkbox de seleção */}
                       <input type="checkbox" checked={selected}
-                        onChange={()=>toggleSelecionado(idx)}
-                        onClick={e=>e.stopPropagation()}
+                        onChange={() => toggleSelecionado(idx)}
+                        onClick={e => e.stopPropagation()}
                         className="w-4 h-4 flex-shrink-0 cursor-pointer accent-blue-600"/>
-                      <span className={'text-xs px-2 py-0.5 rounded-full font-medium flex-shrink-0 '+r.status.cls}>{r.status.label}</span>
+                      <span className={'text-xs px-2 py-0.5 rounded-full font-medium flex-shrink-0 ' + r.status.cls}>{r.status.label}</span>
                       <div className="grid grid-cols-2 gap-4 flex-1 min-w-0">
                         <p className="text-sm text-slate-700 truncate">
-                          {r.clausulaA?(r.clausulaA.numero?r.clausulaA.numero+' — ':'')+r.clausulaA.titulo:<span className="text-slate-400 italic">—</span>}
+                          {r.clausulaA ? (r.clausulaA.numero ? r.clausulaA.numero + ' — ' : '') + r.clausulaA.titulo : <span className="text-slate-400 italic">—</span>}
                         </p>
                         <p className="text-sm text-slate-700 truncate">
-                          {r.clausulaB?(r.clausulaB.numero?r.clausulaB.numero+' — ':'')+r.clausulaB.titulo:<span className="text-slate-400 italic">—</span>}
+                          {r.clausulaB ? (r.clausulaB.numero ? r.clausulaB.numero + ' — ' : '') + r.clausulaB.titulo : <span className="text-slate-400 italic">—</span>}
                         </p>
                       </div>
-                      <span className="text-slate-300 text-sm flex-shrink-0">{expanded?'▲':'▼'}</span>
+                      <span className="text-slate-300 text-sm flex-shrink-0">{expanded ? '▲' : '▼'}</span>
                     </div>
                   </div>
 
-                  {expanded&&(
+                  {expanded && (
                     <div className="border-t border-slate-100 grid grid-cols-2 divide-x divide-slate-100">
                       <div className="p-4 bg-purple-50/30">
                         <p className="text-xs font-bold text-purple-700 mb-2 uppercase tracking-wide">A — {iA?.nome}</p>
-                        {r.clausulaA?(
+                        {r.clausulaA ? (
                           <>
                             <p className="text-xs font-semibold text-slate-700 mb-2">{r.clausulaA.titulo}</p>
-                            {diff?<DiffText html={diff.html_a}/>:<p className="text-xs text-slate-600 leading-relaxed whitespace-pre-wrap">{r.clausulaA.conteudo}</p>}
+                            {diff ? <DiffText html={diff.html_a}/> : <p className="text-xs text-slate-600 leading-relaxed whitespace-pre-wrap">{r.clausulaA.conteudo}</p>}
                           </>
-                        ):<p className="text-xs text-slate-400 italic">Cláusula não existia no instrumento A</p>}
+                        ) : <p className="text-xs text-slate-400 italic">Cláusula não existia no instrumento A</p>}
                       </div>
                       <div className="p-4 bg-green-50/30">
                         <p className="text-xs font-bold text-green-700 mb-2 uppercase tracking-wide">B — {iB?.nome}</p>
-                        {r.clausulaB?(
+                        {r.clausulaB ? (
                           <>
                             <p className="text-xs font-semibold text-slate-700 mb-2">{r.clausulaB.titulo}</p>
-                            {diff?<DiffText html={diff.html_b}/>:<p className="text-xs text-slate-600 leading-relaxed whitespace-pre-wrap">{r.clausulaB.conteudo}</p>}
+                            {diff ? <DiffText html={diff.html_b}/> : <p className="text-xs text-slate-600 leading-relaxed whitespace-pre-wrap">{r.clausulaB.conteudo}</p>}
                           </>
-                        ):<p className="text-xs text-slate-400 italic">Cláusula suprimida no instrumento B</p>}
+                        ) : <p className="text-xs text-slate-400 italic">Cláusula suprimida no instrumento B</p>}
                       </div>
                     </div>
                   )}
@@ -354,13 +396,12 @@ export default function Comparativo() {
         </>
       )}
 
-      {/* Barra flutuante de exportar selecionados */}
-      {selecionados.size>0&&(
+      {selecionados.size > 0 && (
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-slate-800 text-white rounded-2xl px-5 py-3 flex items-center gap-3 shadow-2xl z-50 border border-slate-700">
           <span className="text-sm font-semibold">{selecionados.size} cláusula(s) selecionada(s)</span>
-          <button onClick={()=>exportar('excel')} className="text-xs bg-white/15 hover:bg-white/25 px-3 py-1.5 rounded-lg transition-colors">📊 Excel</button>
-          <button onClick={()=>exportar('pdf')}   className="text-xs bg-white/15 hover:bg-white/25 px-3 py-1.5 rounded-lg transition-colors">📄 PDF</button>
-          <button onClick={()=>setSelecionados(new Set())} className="text-xs opacity-60 hover:opacity-100 ml-1 transition-colors">✕ Limpar</button>
+          <button onClick={() => exportar('excel')} className="text-xs bg-white/15 hover:bg-white/25 px-3 py-1.5 rounded-lg transition-colors">📊 Excel</button>
+          <button onClick={() => exportar('pdf')}   className="text-xs bg-white/15 hover:bg-white/25 px-3 py-1.5 rounded-lg transition-colors">📄 PDF</button>
+          <button onClick={() => setSelecionados(new Set())} className="text-xs opacity-60 hover:opacity-100 ml-1">✕ Limpar</button>
         </div>
       )}
     </div>
