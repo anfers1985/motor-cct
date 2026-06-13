@@ -46,7 +46,7 @@ export default function Clausulas() {
         .eq('user_id', user.id).eq('status_processamento', 'processado').order('nome'),
       supabase.from('empresas').select('id,razao_social,cnpj').eq('user_id', user.id).order('razao_social'),
       supabase.from('operacoes').select('id,nome').eq('user_id', user.id).order('nome'),
-      supabase.from('sindicatos').select('id,razao_social,sigla').eq('user_id', user.id).order('razao_social'),
+      supabase.from('sindicatos').select('id,razao_social,sigla,tipo').eq('user_id', user.id).order('razao_social'),
     ]).then(([{data:insts},{data:emps},{data:ops},{data:sinds}]) => {
       setTodosInstrumentos(insts || [])
       setEmpresas(emps || [])
@@ -181,14 +181,14 @@ export default function Clausulas() {
             <label className="label">Sindicato Laboral</label>
             <select className="input" value={filtroSindLab} onChange={e => setFiltroSindLab(e.target.value)}>
               <option value="">Todos</option>
-              {sindicatos.map(s => <option key={s.id} value={s.id}>{s.sigla ? s.sigla + ' — ' : ''}{s.razao_social}</option>)}
+              {sindicatos.filter(s=>s.tipo==='laboral').map(s => <option key={s.id} value={s.id}>{s.sigla ? s.sigla + ' — ' : ''}{s.razao_social}</option>)}
             </select>
           </div>
           <div>
             <label className="label">Sindicato Patronal</label>
             <select className="input" value={filtroSindPat} onChange={e => setFiltroSindPat(e.target.value)}>
               <option value="">Todos</option>
-              {sindicatos.map(s => <option key={s.id} value={s.id}>{s.sigla ? s.sigla + ' — ' : ''}{s.razao_social}</option>)}
+              {sindicatos.filter(s=>s.tipo==='patronal').map(s => <option key={s.id} value={s.id}>{s.sigla ? s.sigla + ' — ' : ''}{s.razao_social}</option>)}
             </select>
           </div>
           {temFiltroInstrumento && (

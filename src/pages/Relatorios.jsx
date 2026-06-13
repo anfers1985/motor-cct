@@ -6,16 +6,22 @@ import { CATEGORIAS } from '../utils/categorias'
 import { gerarExcelMultiplo, gerarExcelInstrumento } from '../services/reports/excelReport'
 import { gerarPDFInstrumento } from '../services/reports/pdfReport'
 
-function MultiSelect({ label, options, value, onChange }) {
+function MultiSelect({ label, options, value, onChange, disabled, hint }) {
   return (
     <div>
       <label className="label">{label}</label>
-      <select multiple className="input h-28 text-xs" value={value}
-        onChange={e => onChange([...e.target.selectedOptions].map(o => o.value))}>
-        {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-      </select>
+      {disabled ? (
+        <div className="input h-28 bg-slate-50 flex items-center justify-center">
+          <p className="text-xs text-slate-300 italic text-center px-2">{hint || 'Selecione o nível anterior'}</p>
+        </div>
+      ) : (
+        <select multiple className="input h-28 text-xs" value={value}
+          onChange={e => onChange([...e.target.selectedOptions].map(o => o.value))}>
+          {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+        </select>
+      )}
       <p className="text-[10px] text-slate-400 mt-0.5">
-        Ctrl+clique para múltiplos. {value.length > 0 ? value.length + ' selecionado(s)' : 'Todos'}
+        {disabled ? '' : `Ctrl+clique para múltiplos. ${value.length > 0 ? value.length + ' selecionado(s)' : 'Todos (' + options.length + ')'}`}
       </p>
     </div>
   )
@@ -24,8 +30,8 @@ function MultiSelect({ label, options, value, onChange }) {
 export default function Relatorios() {
   const { user } = useAuth()
   const [loading, setLoading] = useState(false)
-  const [todasEmpresas, setTodasEmpresas] = useState([])
-  const [todasOperacoes, setTodasOperacoes] = useState([])
+  const [todasEmpresas, setTodasEmpresas]     = useState([])
+  const [todasOperacoes, setTodasOperacoes]   = useState([])
   const [todosSindicatos, setTodosSindicatos] = useState([])
   const [todosInstrumentos, setTodosInstrumentos] = useState([])
   const [preview, setPreview] = useState(null)
@@ -41,7 +47,6 @@ export default function Relatorios() {
       supabase.from('empresas').select('id,razao_social').eq('user_id', user.id).order('razao_social'),
       supabase.from('operacoes').select('id,nome,codigo').eq('user_id', user.id).order('nome'),
       supabase.from('sindicatos').select('id,razao_social,sigla,tipo').eq('user_id', user.id).order('razao_social'),
-      // Busca TODOS os campos necessários incluindo vigencia_fim e vigencia_inicio
       supabase.from('instrumentos')
         .select('id,nome,tipo,vigencia_inicio,vigencia_fim,empresa_id,operacao_id,sindicato_laboral_id,sindicato_patronal_id')
         .eq('user_id', user.id).eq('status_processamento', 'processado').order('nome'),
@@ -53,31 +58,72 @@ export default function Relatorios() {
     })
   }, [user])
 
+  const laboral  = todosSindicatos.filter(s => s.tipo === 'laboral')
+  const patronal = todosSindicatos.filter(s => s.tipo === 'patronal')
+
+  // ── Cascade: opções de cada nível são filtradas pelo nível acima ──────────
+
+  // Nível 2 — operações disponíveis para as empresas selecionadas
+  const instsPorEmpresa = filtros.empresas.length > 0
+    ? todosInstrumentos.filter(i => filtros.empresas.includes(i.empresa_id))
+    : todosInstrumentos
+
+  const opcoesOperacoes = todasOperacoes.filter(o =>
+    instsPorEmpresa.some(i => i.operacao_id === o.id)
+  )
+
+  // Nível 3 — sindicatos disponíveis para empresa + operação selecionados
+  const instsPorOp = filtros.operacoes.length > 0
+    ? instsPorEmpresa.filter(i => filtros.operacoes.includes(i.operacao_id))
+    : instsPorEmpresa
+
+  const opcoesLaboral  = laboral.filter(s => instsPorOp.some(i => i.sindicato_laboral_id  === s.id))
+  const opcoesPatronal = patronal.filter(s => instsPorOp.some(i => i.sindicato_patronal_id === s.id))
+
+  // Nível 4 — instrumentos disponíveis para empresa + operação + sindicato selecionados
+  const instsPorSind = (() => {
+    let i = instsPorOp
+    if (filtros.sindicatosLab.length > 0) i = i.filter(x => filtros.sindicatosLab.includes(x.sindicato_laboral_id))
+    if (filtros.sindicatosPat.length > 0) i = i.filter(x => filtros.sindicatosPat.includes(x.sindicato_patronal_id))
+    return i
+  })()
+
+  const opcoesInstrumentos = instsPorSind.map(i => ({ value: i.id, label: i.tipo + ' — ' + i.nome }))
+
+  // Subcategorias disponíveis para categorias selecionadas
   const subcatsDisponiveis = filtros.categorias.length > 0
     ? [...new Set(filtros.categorias.flatMap(cat => CATEGORIAS[cat] || []))].map(s => ({ value: s, label: s }))
     : [...new Set(Object.values(CATEGORIAS).flat())].map(s => ({ value: s, label: s }))
 
+  // Visibilidade dos níveis
+  const nivel2Ativo = filtros.empresas.length > 0
+  const nivel3Ativo = nivel2Ativo  // sindicatos aparecem após empresa (independente de operação)
+  const nivel4Ativo = nivel3Ativo  // instrumentos aparecem após sindicato nível aparecer
+
+  // ── Handlers que limpam níveis abaixo ao mudar o nível acima ──────────────
+  function setEmpresas(v)   { setFiltros({ ...filtros, empresas: v, operacoes: [], sindicatosLab: [], sindicatosPat: [], instrumentos: [] }); setPreview(null) }
+  function setOperacoes(v)  { setFiltros({ ...filtros, operacoes: v, sindicatosLab: [], sindicatosPat: [], instrumentos: [] }); setPreview(null) }
+  function setSindLab(v)    { setFiltros({ ...filtros, sindicatosLab: v, instrumentos: [] }); setPreview(null) }
+  function setSindPat(v)    { setFiltros({ ...filtros, sindicatosPat: v, instrumentos: [] }); setPreview(null) }
+  function setInstrumentos(v){ setFiltros({ ...filtros, instrumentos: v }); setPreview(null) }
+
+  // ── Filtrar instrumentos para exportar ────────────────────────────────────
   function filtrarInstrumentos() {
-    let insts = [...todosInstrumentos]
+    let insts = [...instsPorSind]
     if (filtros.instrumentos.length > 0) insts = insts.filter(i => filtros.instrumentos.includes(i.id))
-    if (filtros.empresas.length > 0) insts = insts.filter(i => filtros.empresas.includes(i.empresa_id))
-    if (filtros.operacoes.length > 0) insts = insts.filter(i => filtros.operacoes.includes(i.operacao_id))
-    if (filtros.sindicatosLab.length > 0) insts = insts.filter(i => filtros.sindicatosLab.includes(i.sindicato_laboral_id))
-    if (filtros.sindicatosPat.length > 0) insts = insts.filter(i => filtros.sindicatosPat.includes(i.sindicato_patronal_id))
     if (filtros.vigencia === 'vigente') insts = insts.filter(i => vigenciaStatus(i.vigencia_fim) === 'vigente')
     else if (filtros.vigencia === 'vencido') insts = insts.filter(i => vigenciaStatus(i.vigencia_fim) === 'vencido')
     else if (filtros.vigencia === 'alerta') insts = insts.filter(i => vigenciaStatus(i.vigencia_fim) === 'alerta')
     else if (filtros.vigencia === 'ultimo_vigente') {
       const grupos = {}
       for (const i of insts) {
-        const key = (i.empresa_id || '') + '-' + (i.operacao_id || '') + '-' + (i.sindicato_laboral_id || '')
+        const key = (i.empresa_id||'')+(i.operacao_id||'')+(i.sindicato_laboral_id||'')
         if (!grupos[key]) grupos[key] = []
         grupos[key].push(i)
       }
-      insts = Object.values(grupos).map(grupo => {
-        const vigentes = grupo.filter(i => vigenciaStatus(i.vigencia_fim) === 'vigente')
-        const lista = vigentes.length > 0 ? vigentes : grupo
-        return lista.sort((a, b) => new Date(b.vigencia_fim || 0) - new Date(a.vigencia_fim || 0))[0]
+      insts = Object.values(grupos).map(g => {
+        const vig = g.filter(i => vigenciaStatus(i.vigencia_fim) === 'vigente')
+        return (vig.length > 0 ? vig : g).sort((a,b) => new Date(b.vigencia_fim||0)-new Date(a.vigencia_fim||0))[0]
       })
     }
     return insts
@@ -85,7 +131,7 @@ export default function Relatorios() {
 
   async function calcularPreview() {
     const insts = filtrarInstrumentos()
-    if (insts.length === 0) { setPreview({ count: 0, instrumentosCount: 0 }); return }
+    if (!insts.length) { setPreview({ count: 0, instrumentosCount: 0 }); return }
     let total = 0
     for (const inst of insts) {
       const { count } = await supabase.from('clausulas').select('*', { count: 'exact', head: true })
@@ -97,7 +143,7 @@ export default function Relatorios() {
 
   async function buscarDados() {
     const insts = filtrarInstrumentos()
-    if (insts.length === 0) return { insts: [], clausulas: [] }
+    if (!insts.length) return { insts: [], clausulas: [] }
     let todasClausulas = []
     for (const inst of insts) {
       let q = supabase.from('clausulas').select('*').eq('instrumento_id', inst.id).eq('user_id', user.id)
@@ -113,21 +159,21 @@ export default function Relatorios() {
     setLoading(true)
     try {
       const { insts, clausulas } = await buscarDados()
-      if (clausulas.length === 0) { alert('Nenhuma cláusula encontrada.'); setLoading(false); return }
+      if (!clausulas.length) { alert('Nenhuma cláusula encontrada.'); setLoading(false); return }
       if (insts.length === 1) {
         const inst = insts[0]
-        const [{ data: emp }, { data: op }, { data: sLab }, { data: sPat }] = await Promise.all([
-          inst.empresa_id ? supabase.from('empresas').select('*').eq('id', inst.empresa_id).single() : { data: null },
-          inst.operacao_id ? supabase.from('operacoes').select('*').eq('id', inst.operacao_id).single() : { data: null },
-          inst.sindicato_laboral_id ? supabase.from('sindicatos').select('*').eq('id', inst.sindicato_laboral_id).single() : { data: null },
-          inst.sindicato_patronal_id ? supabase.from('sindicatos').select('*').eq('id', inst.sindicato_patronal_id).single() : { data: null },
+        const [{ data: emp },{ data: op },{ data: sLab },{ data: sPat }] = await Promise.all([
+          inst.empresa_id ? supabase.from('empresas').select('*').eq('id',inst.empresa_id).single() : {data:null},
+          inst.operacao_id ? supabase.from('operacoes').select('*').eq('id',inst.operacao_id).single() : {data:null},
+          inst.sindicato_laboral_id ? supabase.from('sindicatos').select('*').eq('id',inst.sindicato_laboral_id).single() : {data:null},
+          inst.sindicato_patronal_id ? supabase.from('sindicatos').select('*').eq('id',inst.sindicato_patronal_id).single() : {data:null},
         ])
         await gerarExcelInstrumento(inst, clausulas, emp, op, sLab, sPat)
       } else {
-        const [{ data: emps }, { data: ops }, { data: sinds }] = await Promise.all([
-          supabase.from('empresas').select('*').eq('user_id', user.id),
-          supabase.from('operacoes').select('*').eq('user_id', user.id),
-          supabase.from('sindicatos').select('*').eq('user_id', user.id),
+        const [{ data: emps },{ data: ops },{ data: sinds }] = await Promise.all([
+          supabase.from('empresas').select('*').eq('user_id',user.id),
+          supabase.from('operacoes').select('*').eq('user_id',user.id),
+          supabase.from('sindicatos').select('*').eq('user_id',user.id),
         ])
         await gerarExcelMultiplo(insts, clausulas, emps, ops, sinds)
       }
@@ -139,15 +185,15 @@ export default function Relatorios() {
     setLoading(true)
     try {
       const { insts, clausulas } = await buscarDados()
-      if (clausulas.length === 0) { alert('Nenhuma cláusula encontrada.'); setLoading(false); return }
+      if (!clausulas.length) { alert('Nenhuma cláusula encontrada.'); setLoading(false); return }
       for (const inst of insts) {
         const clausulasInst = clausulas.filter(c => c.instrumento_id === inst.id)
         if (!clausulasInst.length) continue
-        const [{ data: emp }, { data: op }, { data: sLab }, { data: sPat }] = await Promise.all([
-          inst.empresa_id ? supabase.from('empresas').select('*').eq('id', inst.empresa_id).single() : { data: null },
-          inst.operacao_id ? supabase.from('operacoes').select('*').eq('id', inst.operacao_id).single() : { data: null },
-          inst.sindicato_laboral_id ? supabase.from('sindicatos').select('*').eq('id', inst.sindicato_laboral_id).single() : { data: null },
-          inst.sindicato_patronal_id ? supabase.from('sindicatos').select('*').eq('id', inst.sindicato_patronal_id).single() : { data: null },
+        const [{ data: emp },{ data: op },{ data: sLab },{ data: sPat }] = await Promise.all([
+          inst.empresa_id ? supabase.from('empresas').select('*').eq('id',inst.empresa_id).single() : {data:null},
+          inst.operacao_id ? supabase.from('operacoes').select('*').eq('id',inst.operacao_id).single() : {data:null},
+          inst.sindicato_laboral_id ? supabase.from('sindicatos').select('*').eq('id',inst.sindicato_laboral_id).single() : {data:null},
+          inst.sindicato_patronal_id ? supabase.from('sindicatos').select('*').eq('id',inst.sindicato_patronal_id).single() : {data:null},
         ])
         gerarPDFInstrumento(inst, clausulasInst, emp, op, sLab, sPat)
         if (insts.length > 1) await new Promise(r => setTimeout(r, 600))
@@ -156,8 +202,6 @@ export default function Relatorios() {
     setLoading(false)
   }
 
-  const laboral = todosSindicatos.filter(s => s.tipo === 'laboral')
-  const patronal = todosSindicatos.filter(s => s.tipo === 'patronal')
   const instsPreview = filtrarInstrumentos()
 
   return (
@@ -170,42 +214,91 @@ export default function Relatorios() {
       <div className="grid grid-cols-1 gap-6">
         <div className="card p-5">
           <h2 className="font-display font-semibold text-slate-700 mb-1">🔍 Filtros do Relatório</h2>
-          <p className="text-xs text-slate-400 mb-4">Deixe em branco para incluir todos. Use Ctrl+clique para selecionar vários itens.</p>
+          <p className="text-xs text-slate-400 mb-4">
+            Cada nível filtra automaticamente as opções do próximo. Deixe sem seleção para incluir todos do nível.
+          </p>
 
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
-            <MultiSelect label="Empresa(s)"
-              options={todasEmpresas.map(e => ({ value: e.id, label: e.razao_social }))}
-              value={filtros.empresas} onChange={v => setFiltros({ ...filtros, empresas: v })} />
-            <MultiSelect label="Operação(ões)"
-              options={todasOperacoes.map(o => ({ value: o.id, label: o.nome + (o.codigo ? ' (' + o.codigo + ')' : '') }))}
-              value={filtros.operacoes} onChange={v => setFiltros({ ...filtros, operacoes: v })} />
-            <MultiSelect label="Sindicato(s) Laboral(is)"
-              options={laboral.map(s => ({ value: s.id, label: (s.sigla ? s.sigla + ' — ' : '') + s.razao_social }))}
-              value={filtros.sindicatosLab} onChange={v => setFiltros({ ...filtros, sindicatosLab: v })} />
-            <MultiSelect label="Sindicato(s) Patronal(is)"
-              options={patronal.map(s => ({ value: s.id, label: (s.sigla ? s.sigla + ' — ' : '') + s.razao_social }))}
-              value={filtros.sindicatosPat} onChange={v => setFiltros({ ...filtros, sindicatosPat: v })} />
-            <MultiSelect label="Instrumento(s) Coletivo(s)"
-              options={todosInstrumentos.map(i => ({ value: i.id, label: i.tipo + ' — ' + i.nome }))}
-              value={filtros.instrumentos} onChange={v => setFiltros({ ...filtros, instrumentos: v })} />
-            <div>
-              <label className="label">Vigência</label>
-              <select className="input" value={filtros.vigencia} onChange={e => setFiltros({ ...filtros, vigencia: e.target.value })}>
-                <option value="">Todos (vigentes e vencidos)</option>
-                <option value="vigente">Somente vigentes</option>
-                <option value="alerta">Vence em 60 dias</option>
-                <option value="vencido">Somente vencidos</option>
-                <option value="ultimo_vigente">Último por operação (vigente ou mais recente)</option>
-              </select>
+          {/* Nível 1 — Empresa */}
+          <div className="mb-4">
+            <div className="flex items-center gap-2 mb-2">
+              <span className="w-5 h-5 rounded-full bg-brand-600 text-white text-xs flex items-center justify-center font-bold flex-shrink-0">1</span>
+              <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Empresa e Operação</p>
             </div>
-            <MultiSelect label="Categoria(s)"
-              options={Object.keys(CATEGORIAS).map(c => ({ value: c, label: c }))}
-              value={filtros.categorias} onChange={v => setFiltros({ ...filtros, categorias: v, subcategorias: [] })} />
-            <MultiSelect label="Subcategoria(s)"
-              options={[...new Map(subcatsDisponiveis.map(o => [o.value, o])).values()]}
-              value={filtros.subcategorias} onChange={v => setFiltros({ ...filtros, subcategorias: v })} />
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+              <MultiSelect label="Empresa(s)"
+                options={todasEmpresas.map(e => ({ value: e.id, label: e.razao_social }))}
+                value={filtros.empresas} onChange={setEmpresas}/>
+              <MultiSelect label="Operação(ões)"
+                options={opcoesOperacoes.map(o => ({ value: o.id, label: o.nome + (o.codigo ? ' ('+o.codigo+')' : '') }))}
+                value={filtros.operacoes} onChange={setOperacoes}
+                disabled={!nivel2Ativo}
+                hint={`Selecione empresa(s) primeiro`}/>
+            </div>
           </div>
 
+          {/* Nível 2 — Sindicatos */}
+          <div className={'mb-4 transition-all ' + (nivel3Ativo ? '' : 'opacity-40 pointer-events-none')}>
+            <div className="flex items-center gap-2 mb-2">
+              <span className={'w-5 h-5 rounded-full text-xs flex items-center justify-center font-bold flex-shrink-0 ' + (nivel3Ativo ? 'bg-brand-600 text-white' : 'bg-slate-200 text-slate-400')}>2</span>
+              <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Sindicatos</p>
+              {!nivel3Ativo && <p className="text-xs text-slate-400">— selecione a empresa primeiro</p>}
+            </div>
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+              <MultiSelect label="Sindicato(s) Laboral(is)"
+                options={opcoesLaboral.map(s => ({ value: s.id, label: (s.sigla?s.sigla+' — ':'')+s.razao_social }))}
+                value={filtros.sindicatosLab} onChange={setSindLab}
+                disabled={!nivel3Ativo}/>
+              <MultiSelect label="Sindicato(s) Patronal(is)"
+                options={opcoesPatronal.map(s => ({ value: s.id, label: (s.sigla?s.sigla+' — ':'')+s.razao_social }))}
+                value={filtros.sindicatosPat} onChange={setSindPat}
+                disabled={!nivel3Ativo}/>
+            </div>
+          </div>
+
+          {/* Nível 3 — Instrumento */}
+          <div className={'mb-4 transition-all ' + (nivel4Ativo ? '' : 'opacity-40 pointer-events-none')}>
+            <div className="flex items-center gap-2 mb-2">
+              <span className={'w-5 h-5 rounded-full text-xs flex items-center justify-center font-bold flex-shrink-0 ' + (nivel4Ativo ? 'bg-brand-600 text-white' : 'bg-slate-200 text-slate-400')}>3</span>
+              <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Instrumento e Vigência</p>
+              {!nivel4Ativo && <p className="text-xs text-slate-400">— selecione a empresa primeiro</p>}
+            </div>
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+              <MultiSelect label="Instrumento(s) Coletivo(s)"
+                options={opcoesInstrumentos}
+                value={filtros.instrumentos} onChange={setInstrumentos}
+                disabled={!nivel4Ativo}/>
+              <div>
+                <label className="label">Vigência</label>
+                <select className="input" value={filtros.vigencia} onChange={e => { setFiltros({...filtros, vigencia:e.target.value}); setPreview(null) }}>
+                  <option value="">Todos (vigentes e vencidos)</option>
+                  <option value="vigente">Somente vigentes</option>
+                  <option value="alerta">Vence em 60 dias</option>
+                  <option value="vencido">Somente vencidos</option>
+                  <option value="ultimo_vigente">Último por operação (vigente ou mais recente)</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          {/* Nível 4 — Categorias (sempre visível) */}
+          <div className="mb-4">
+            <div className="flex items-center gap-2 mb-2">
+              <span className="w-5 h-5 rounded-full bg-slate-300 text-white text-xs flex items-center justify-center font-bold flex-shrink-0">4</span>
+              <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Filtro de Cláusulas (opcional)</p>
+            </div>
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+              <MultiSelect label="Categoria(s)"
+                options={Object.keys(CATEGORIAS).map(c => ({ value: c, label: c }))}
+                value={filtros.categorias}
+                onChange={v => { setFiltros({...filtros, categorias:v, subcategorias:[]}); setPreview(null) }}/>
+              <MultiSelect label="Subcategoria(s)"
+                options={[...new Map(subcatsDisponiveis.map(o => [o.value, o])).values()]}
+                value={filtros.subcategorias}
+                onChange={v => { setFiltros({...filtros, subcategorias:v}); setPreview(null) }}/>
+            </div>
+          </div>
+
+          {/* Prévia e exportar */}
           <div className="bg-surface-50 rounded-lg p-3 mb-4 flex items-center justify-between flex-wrap gap-2">
             <div>
               <p className="text-sm font-medium text-slate-700">
@@ -229,7 +322,7 @@ export default function Relatorios() {
               {loading ? '⏳ Gerando...' : '📄 Exportar PDF'}
             </button>
             <button className="btn-secondary text-slate-400" onClick={() => {
-              setFiltros({ empresas: [], operacoes: [], sindicatosLab: [], sindicatosPat: [], categorias: [], subcategorias: [], instrumentos: [], vigencia: '' })
+              setFiltros({ empresas:[], operacoes:[], sindicatosLab:[], sindicatosPat:[], categorias:[], subcategorias:[], instrumentos:[], vigencia:'' })
               setPreview(null)
             }}>Limpar filtros</button>
           </div>
