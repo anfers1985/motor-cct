@@ -6,47 +6,134 @@ import { CATEGORIAS } from '../utils/categorias'
 import { gerarExcelMultiplo, gerarExcelInstrumento } from '../services/reports/excelReport'
 import { gerarPDFInstrumento } from '../services/reports/pdfReport'
 
-function MultiSelect({ label, options, value, onChange, disabled, hint }) {
+// ── CheckList com busca por nome/CNPJ ────────────────────────────────────────
+function CheckList({ opcoes, selecionados, onChange, busca, onBusca }) {
+  const q = busca.toLowerCase()
+  const cnpjQ = busca.replace(/\D/g, '')
+  const filtrados = busca
+    ? opcoes.filter(o =>
+        o.label.toLowerCase().includes(q) ||
+        (cnpjQ.length >= 3 && (o.cnpj || '').replace(/\D/g, '').includes(cnpjQ))
+      )
+    : opcoes
+
   return (
     <div>
-      <label className="label">{label}</label>
-      {disabled ? (
-        <div className="input h-28 bg-slate-50 flex items-center justify-center">
-          <p className="text-xs text-slate-300 italic text-center px-2">{hint || 'Selecione o nível anterior'}</p>
-        </div>
-      ) : (
-        <select multiple className="input h-28 text-xs" value={value}
-          onChange={e => onChange([...e.target.selectedOptions].map(o => o.value))}>
-          {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-        </select>
-      )}
-      <p className="text-[10px] text-slate-400 mt-0.5">
-        {disabled ? '' : `Ctrl+clique para múltiplos. ${value.length > 0 ? value.length + ' selecionado(s)' : 'Todos (' + options.length + ')'}`}
-      </p>
+      <input className="input text-sm mb-2" placeholder="Buscar por nome ou CNPJ..."
+        value={busca} onChange={e => onBusca(e.target.value)}/>
+      <div className="border border-slate-200 rounded-lg overflow-y-auto" style={{ maxHeight: 168 }}>
+        {filtrados.length === 0 && (
+          <p className="text-xs text-slate-400 p-3 italic">Nenhuma opção disponível</p>
+        )}
+        {filtrados.map(o => (
+          <label key={o.value}
+            className="flex items-start gap-3 px-3 py-2.5 hover:bg-surface-50 cursor-pointer border-b border-slate-100 last:border-0">
+            <input type="checkbox" className="mt-0.5 accent-blue-600 flex-shrink-0"
+              checked={selecionados.includes(o.value)}
+              onChange={e => e.target.checked
+                ? onChange([...selecionados, o.value])
+                : onChange(selecionados.filter(id => id !== o.value))}/>
+            <div className="min-w-0">
+              <p className="text-sm text-slate-700 leading-tight">{o.label}</p>
+              {o.cnpj && <p className="text-xs text-slate-400 mt-0.5">{o.cnpj}</p>}
+            </div>
+          </label>
+        ))}
+      </div>
+      <div className="flex items-center gap-2 mt-1.5 text-xs text-slate-400">
+        <button className="hover:text-slate-600 transition-colors"
+          onClick={() => onChange(filtrados.map(o => o.value))}>Selecionar todos</button>
+        <span>·</span>
+        <button className="hover:text-slate-600 transition-colors"
+          onClick={() => onChange([])}>Limpar</button>
+        <span className="ml-auto font-medium text-slate-500">
+          {selecionados.length === 0
+            ? 'Todos (' + opcoes.length + ')'
+            : selecionados.length + ' selecionado(s)'}
+        </span>
+      </div>
     </div>
   )
 }
 
+// ── Card de passo do stepper ──────────────────────────────────────────────────
+function StepCard({ number, title, subtitle, active, done, locked, summary, onEdit, children, onConfirm, onSkip }) {
+  return (
+    <div className={'card mb-3 overflow-hidden transition-all ' + (locked ? 'opacity-40 pointer-events-none' : '')}>
+      <div className="p-4">
+        <div className="flex items-center gap-3">
+          <div className={'w-7 h-7 rounded-full flex items-center justify-center text-sm font-medium flex-shrink-0 transition-colors ' +
+            (done && !active ? 'bg-emerald-500 text-white'
+              : active ? 'bg-brand-600 text-white'
+              : 'bg-slate-100 text-slate-400')}>
+            {done && !active ? '✓' : number}
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className={'font-medium text-sm ' + (active ? 'text-slate-800' : done ? 'text-slate-700' : 'text-slate-500')}>
+              {title}
+            </p>
+            {active && subtitle && <p className="text-xs text-slate-400 mt-0.5">{subtitle}</p>}
+            {done && !active && summary && <p className="text-xs text-slate-400 truncate mt-0.5">{summary}</p>}
+          </div>
+          {done && !active && (
+            <button onClick={onEdit}
+              className="text-xs text-brand-600 hover:text-brand-700 flex-shrink-0 transition-colors">
+              Editar
+            </button>
+          )}
+        </div>
+
+        {active && (
+          <div className="mt-4 pt-3 border-t border-slate-100">
+            {children}
+            <div className="flex gap-2 mt-4">
+              <button className="btn-primary text-sm py-1.5 px-4" onClick={onConfirm}>
+                Confirmar →
+              </button>
+              {onSkip && (
+                <button className="btn-secondary text-xs py-1.5" onClick={onSkip}>
+                  Incluir todos e avançar
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ── Relatórios ────────────────────────────────────────────────────────────────
 export default function Relatorios() {
   const { user } = useAuth()
   const [loading, setLoading] = useState(false)
-  const [todasEmpresas, setTodasEmpresas]     = useState([])
-  const [todasOperacoes, setTodasOperacoes]   = useState([])
-  const [todosSindicatos, setTodosSindicatos] = useState([])
-  const [todosInstrumentos, setTodosInstrumentos] = useState([])
   const [preview, setPreview] = useState(null)
 
-  const [filtros, setFiltros] = useState({
+  // Dados brutos
+  const [todasEmpresas,     setTodasEmpresas]     = useState([])
+  const [todasOperacoes,    setTodasOperacoes]     = useState([])
+  const [todosSindicatos,   setTodosSindicatos]    = useState([])
+  const [todosInstrumentos, setTodosInstrumentos]  = useState([])
+
+  // Passo atual (1-4), passos confirmados
+  const [stepAtivo,       setStepAtivo]       = useState(1)
+  const [confirmados,     setConfirmados]     = useState(new Set())
+
+  // Seleções de cada nível
+  const [sels, setSels] = useState({
     empresas: [], operacoes: [], sindicatosLab: [], sindicatosPat: [],
-    categorias: [], subcategorias: [], instrumentos: [], vigencia: '',
+    instrumentos: [], vigencia: '', categorias: [], subcategorias: [],
   })
+
+  // Buscas locais por nível
+  const [buscas, setBuscas] = useState({ emp: '', op: '', sindLab: '', sindPat: '', inst: '' })
 
   useEffect(() => {
     if (!user) return
     Promise.all([
-      supabase.from('empresas').select('id,razao_social').eq('user_id', user.id).order('razao_social'),
+      supabase.from('empresas').select('id,razao_social,cnpj').eq('user_id', user.id).order('razao_social'),
       supabase.from('operacoes').select('id,nome,codigo').eq('user_id', user.id).order('nome'),
-      supabase.from('sindicatos').select('id,razao_social,sigla,tipo').eq('user_id', user.id).order('razao_social'),
+      supabase.from('sindicatos').select('id,razao_social,sigla,tipo,cnpj').eq('user_id', user.id).order('razao_social'),
       supabase.from('instrumentos')
         .select('id,nome,tipo,vigencia_inicio,vigencia_fim,empresa_id,operacao_id,sindicato_laboral_id,sindicato_patronal_id')
         .eq('user_id', user.id).eq('status_processamento', 'processado').order('nome'),
@@ -58,108 +145,158 @@ export default function Relatorios() {
     })
   }, [user])
 
+  // ── Mapas rápidos para labels ────────────────────────────────────────────
+  const empMap  = Object.fromEntries(todasEmpresas.map(e => [e.id, e]))
+  const opMap   = Object.fromEntries(todasOperacoes.map(o => [o.id, o]))
+  const sindMap = Object.fromEntries(todosSindicatos.map(s => [s.id, s]))
+  const instMap = Object.fromEntries(todosInstrumentos.map(i => [i.id, i]))
+
   const laboral  = todosSindicatos.filter(s => s.tipo === 'laboral')
   const patronal = todosSindicatos.filter(s => s.tipo === 'patronal')
 
-  // ── Cascade: opções de cada nível são filtradas pelo nível acima ──────────
-
-  // Nível 2 — operações disponíveis para as empresas selecionadas
-  const instsPorEmpresa = filtros.empresas.length > 0
-    ? todosInstrumentos.filter(i => filtros.empresas.includes(i.empresa_id))
+  // ── Cascade: opções filtradas por seleções anteriores ───────────────────
+  const instsPorEmpresa = sels.empresas.length > 0
+    ? todosInstrumentos.filter(i => sels.empresas.includes(i.empresa_id))
     : todosInstrumentos
 
-  const opcoesOperacoes = todasOperacoes.filter(o =>
-    instsPorEmpresa.some(i => i.operacao_id === o.id)
-  )
+  const opcoesOp = todasOperacoes.filter(o => instsPorEmpresa.some(i => i.operacao_id === o.id))
 
-  // Nível 3 — sindicatos disponíveis para empresa + operação selecionados
-  const instsPorOp = filtros.operacoes.length > 0
-    ? instsPorEmpresa.filter(i => filtros.operacoes.includes(i.operacao_id))
+  const instsPorOp = sels.operacoes.length > 0
+    ? instsPorEmpresa.filter(i => sels.operacoes.includes(i.operacao_id))
     : instsPorEmpresa
 
-  const opcoesLaboral  = laboral.filter(s => instsPorOp.some(i => i.sindicato_laboral_id  === s.id))
-  const opcoesPatronal = patronal.filter(s => instsPorOp.some(i => i.sindicato_patronal_id === s.id))
+  const opcoesLab = laboral.filter(s  => instsPorOp.some(i => i.sindicato_laboral_id  === s.id))
+  const opcoesPat = patronal.filter(s => instsPorOp.some(i => i.sindicato_patronal_id === s.id))
 
-  // Nível 4 — instrumentos disponíveis para empresa + operação + sindicato selecionados
   const instsPorSind = (() => {
-    let i = instsPorOp
-    if (filtros.sindicatosLab.length > 0) i = i.filter(x => filtros.sindicatosLab.includes(x.sindicato_laboral_id))
-    if (filtros.sindicatosPat.length > 0) i = i.filter(x => filtros.sindicatosPat.includes(x.sindicato_patronal_id))
-    return i
+    let arr = instsPorOp
+    if (sels.sindicatosLab.length > 0) arr = arr.filter(i => sels.sindicatosLab.includes(i.sindicato_laboral_id))
+    if (sels.sindicatosPat.length > 0) arr = arr.filter(i => sels.sindicatosPat.includes(i.sindicato_patronal_id))
+    return arr
   })()
 
-  const opcoesInstrumentos = instsPorSind.map(i => ({ value: i.id, label: i.tipo + ' — ' + i.nome }))
+  const opcoesInst = instsPorSind.map(i => ({
+    value: i.id,
+    label: i.tipo + ' — ' + i.nome,
+    cnpj: '',
+  }))
 
-  // Subcategorias disponíveis para categorias selecionadas
-  const subcatsDisponiveis = filtros.categorias.length > 0
-    ? [...new Set(filtros.categorias.flatMap(cat => CATEGORIAS[cat] || []))].map(s => ({ value: s, label: s }))
-    : [...new Set(Object.values(CATEGORIAS).flat())].map(s => ({ value: s, label: s }))
+  const subcatsDisponiveis = sels.categorias.length > 0
+    ? [...new Set(sels.categorias.flatMap(cat => CATEGORIAS[cat] || []))]
+    : [...new Set(Object.values(CATEGORIAS).flat())]
 
-  // Visibilidade dos níveis
-  const nivel2Ativo = filtros.empresas.length > 0
-  const nivel3Ativo = nivel2Ativo  // sindicatos aparecem após empresa (independente de operação)
-  const nivel4Ativo = nivel3Ativo  // instrumentos aparecem após sindicato nível aparecer
+  // ── Confirmar / editar passos ────────────────────────────────────────────
+  function confirmar(step, pularTodos = false) {
+    if (pularTodos) {
+      const clearMap = { 1: ['operacoes','sindicatosLab','sindicatosPat','instrumentos'], 2: ['sindicatosLab','sindicatosPat','instrumentos'], 3: ['instrumentos'] }
+      const clear = clearMap[step] || []
+      const patch = {}; clear.forEach(k => { patch[k] = [] })
+      const empresasPatch = step === 1 ? { empresas: [] } : {}
+      const opsPatch = step === 2 ? { operacoes: [] } : {}
+      const sindPatch = step === 3 ? { sindicatosLab: [], sindicatosPat: [] } : {}
+      setSels(prev => ({ ...prev, ...empresasPatch, ...opsPatch, ...sindPatch, ...patch }))
+    }
+    const novos = new Set(confirmados)
+    novos.add(step)
+    // limpa confirmações downstream
+    for (let s = step + 1; s <= 4; s++) novos.delete(s)
+    setConfirmados(novos)
+    setStepAtivo(step + 1)
+    setPreview(null)
+  }
 
-  // ── Handlers que limpam níveis abaixo ao mudar o nível acima ──────────────
-  function setEmpresas(v)   { setFiltros({ ...filtros, empresas: v, operacoes: [], sindicatosLab: [], sindicatosPat: [], instrumentos: [] }); setPreview(null) }
-  function setOperacoes(v)  { setFiltros({ ...filtros, operacoes: v, sindicatosLab: [], sindicatosPat: [], instrumentos: [] }); setPreview(null) }
-  function setSindLab(v)    { setFiltros({ ...filtros, sindicatosLab: v, instrumentos: [] }); setPreview(null) }
-  function setSindPat(v)    { setFiltros({ ...filtros, sindicatosPat: v, instrumentos: [] }); setPreview(null) }
-  function setInstrumentos(v){ setFiltros({ ...filtros, instrumentos: v }); setPreview(null) }
+  function editar(step) {
+    setStepAtivo(step)
+    const novos = new Set(confirmados)
+    for (let s = step; s <= 4; s++) novos.delete(s)
+    setConfirmados(novos)
+    // limpa seleções downstream ao editar
+    if (step <= 1) setSels(prev => ({ ...prev, operacoes: [], sindicatosLab: [], sindicatosPat: [], instrumentos: [] }))
+    else if (step === 2) setSels(prev => ({ ...prev, sindicatosLab: [], sindicatosPat: [], instrumentos: [] }))
+    else if (step === 3) setSels(prev => ({ ...prev, instrumentos: [] }))
+    setPreview(null)
+  }
 
-  // ── Filtrar instrumentos para exportar ────────────────────────────────────
-  function filtrarInstrumentos() {
-    let insts = [...instsPorSind]
-    if (filtros.instrumentos.length > 0) insts = insts.filter(i => filtros.instrumentos.includes(i.id))
-    if (filtros.vigencia === 'vigente') insts = insts.filter(i => vigenciaStatus(i.vigencia_fim) === 'vigente')
-    else if (filtros.vigencia === 'vencido') insts = insts.filter(i => vigenciaStatus(i.vigencia_fim) === 'vencido')
-    else if (filtros.vigencia === 'alerta') insts = insts.filter(i => vigenciaStatus(i.vigencia_fim) === 'alerta')
-    else if (filtros.vigencia === 'ultimo_vigente') {
+  // ── Resumo de cada passo (colapsado) ────────────────────────────────────
+  function resumo(step) {
+    const { empresas, operacoes, sindicatosLab, sindicatosPat, instrumentos } = sels
+    const label2 = (arr, map, fn) => {
+      if (!arr.length) return null
+      const nomes = arr.slice(0, 2).map(id => fn(map[id])).filter(Boolean)
+      return nomes.join(' · ') + (arr.length > 2 ? ` +${arr.length - 2}` : '')
+    }
+    switch (step) {
+      case 1: return empresas.length === 0
+        ? 'Todas as empresas incluídas'
+        : label2(empresas, empMap, e => e?.razao_social)
+      case 2: return operacoes.length === 0
+        ? 'Todas as operações incluídas'
+        : label2(operacoes, opMap, o => o?.nome)
+      case 3: {
+        const lab = sindicatosLab.length === 0 ? 'Todos os laborais' : label2(sindicatosLab, sindMap, s => s?.sigla || s?.razao_social)
+        const pat = sindicatosPat.length === 0 ? 'Todos os patronais' : label2(sindicatosPat, sindMap, s => s?.sigla || s?.razao_social)
+        return lab + ' | ' + pat
+      }
+      case 4: return instrumentos.length === 0
+        ? 'Todos os instrumentos incluídos (' + instsPorSind.length + ')'
+        : label2(instrumentos, instMap, i => i?.nome)
+      default: return ''
+    }
+  }
+
+  // ── Filtrar para exportar ────────────────────────────────────────────────
+  function filtrarParaExportar() {
+    let arr = [...instsPorSind]
+    if (sels.instrumentos.length > 0) arr = arr.filter(i => sels.instrumentos.includes(i.id))
+    if (sels.vigencia === 'vigente')  arr = arr.filter(i => vigenciaStatus(i.vigencia_fim) === 'vigente')
+    else if (sels.vigencia === 'vencido') arr = arr.filter(i => vigenciaStatus(i.vigencia_fim) === 'vencido')
+    else if (sels.vigencia === 'alerta')  arr = arr.filter(i => vigenciaStatus(i.vigencia_fim) === 'alerta')
+    else if (sels.vigencia === 'ultimo_vigente') {
       const grupos = {}
-      for (const i of insts) {
-        const key = (i.empresa_id||'')+(i.operacao_id||'')+(i.sindicato_laboral_id||'')
+      for (const i of arr) {
+        const key = (i.empresa_id||'') + (i.operacao_id||'') + (i.sindicato_laboral_id||'')
         if (!grupos[key]) grupos[key] = []
         grupos[key].push(i)
       }
-      insts = Object.values(grupos).map(g => {
+      arr = Object.values(grupos).map(g => {
         const vig = g.filter(i => vigenciaStatus(i.vigencia_fim) === 'vigente')
-        return (vig.length > 0 ? vig : g).sort((a,b) => new Date(b.vigencia_fim||0)-new Date(a.vigencia_fim||0))[0]
+        return (vig.length > 0 ? vig : g).sort((a, b) => new Date(b.vigencia_fim||0) - new Date(a.vigencia_fim||0))[0]
       })
     }
-    return insts
+    return arr
   }
 
   async function calcularPreview() {
-    const insts = filtrarInstrumentos()
-    if (!insts.length) { setPreview({ count: 0, instrumentosCount: 0 }); return }
+    const insts = filtrarParaExportar()
+    if (!insts.length) { setPreview({ count: 0, n: 0 }); return }
     let total = 0
     for (const inst of insts) {
       const { count } = await supabase.from('clausulas').select('*', { count: 'exact', head: true })
         .eq('instrumento_id', inst.id).eq('user_id', user.id)
       total += count || 0
     }
-    setPreview({ count: total, instrumentosCount: insts.length })
+    setPreview({ count: total, n: insts.length })
   }
 
   async function buscarDados() {
-    const insts = filtrarInstrumentos()
+    const insts = filtrarParaExportar()
     if (!insts.length) return { insts: [], clausulas: [] }
-    let todasClausulas = []
+    let clausulas = []
     for (const inst of insts) {
       let q = supabase.from('clausulas').select('*').eq('instrumento_id', inst.id).eq('user_id', user.id)
-      if (filtros.categorias.length > 0) q = q.in('categoria', filtros.categorias)
-      if (filtros.subcategorias.length > 0) q = q.in('subcategoria', filtros.subcategorias)
+      if (sels.categorias.length > 0)    q = q.in('categoria', sels.categorias)
+      if (sels.subcategorias.length > 0) q = q.in('subcategoria', sels.subcategorias)
       const { data } = await q
-      todasClausulas = todasClausulas.concat(data || [])
+      clausulas = clausulas.concat(data || [])
     }
-    return { insts, clausulas: todasClausulas }
+    return { insts, clausulas }
   }
 
   async function exportarExcel() {
     setLoading(true)
     try {
       const { insts, clausulas } = await buscarDados()
-      if (!clausulas.length) { alert('Nenhuma cláusula encontrada.'); setLoading(false); return }
+      if (!clausulas.length) { alert('Nenhuma cláusula encontrada.'); return }
       if (insts.length === 1) {
         const inst = insts[0]
         const [{ data: emp },{ data: op },{ data: sLab },{ data: sPat }] = await Promise.all([
@@ -185,7 +322,7 @@ export default function Relatorios() {
     setLoading(true)
     try {
       const { insts, clausulas } = await buscarDados()
-      if (!clausulas.length) { alert('Nenhuma cláusula encontrada.'); setLoading(false); return }
+      if (!clausulas.length) { alert('Nenhuma cláusula encontrada.'); return }
       for (const inst of insts) {
         const clausulasInst = clausulas.filter(c => c.instrumento_id === inst.id)
         if (!clausulasInst.length) continue
@@ -202,137 +339,224 @@ export default function Relatorios() {
     setLoading(false)
   }
 
-  const instsPreview = filtrarInstrumentos()
+  const instsParaExportar = filtrarParaExportar()
+  const tudo4Confirmado   = confirmados.has(1)
+
+  const S = sels
 
   return (
     <div>
       <div className="mb-6">
         <h1 className="font-display font-bold text-2xl text-slate-800">Relatórios</h1>
-        <p className="text-slate-500 text-sm">Selecione os filtros e gere relatórios em Excel ou PDF</p>
+        <p className="text-slate-500 text-sm">Selecione os filtros em 4 passos e gere relatórios em Excel ou PDF</p>
       </div>
 
-      <div className="grid grid-cols-1 gap-6">
-        <div className="card p-5">
-          <h2 className="font-display font-semibold text-slate-700 mb-1">🔍 Filtros do Relatório</h2>
-          <p className="text-xs text-slate-400 mb-4">
-            Cada nível filtra automaticamente as opções do próximo. Deixe sem seleção para incluir todos do nível.
-          </p>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
 
-          {/* Nível 1 — Empresa */}
-          <div className="mb-4">
-            <div className="flex items-center gap-2 mb-2">
-              <span className="w-5 h-5 rounded-full bg-brand-600 text-white text-xs flex items-center justify-center font-bold flex-shrink-0">1</span>
-              <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Empresa e Operação</p>
-            </div>
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-              <MultiSelect label="Empresa(s)"
-                options={todasEmpresas.map(e => ({ value: e.id, label: e.razao_social }))}
-                value={filtros.empresas} onChange={setEmpresas}/>
-              <MultiSelect label="Operação(ões)"
-                options={opcoesOperacoes.map(o => ({ value: o.id, label: o.nome + (o.codigo ? ' ('+o.codigo+')' : '') }))}
-                value={filtros.operacoes} onChange={setOperacoes}
-                disabled={!nivel2Ativo}
-                hint={`Selecione empresa(s) primeiro`}/>
-            </div>
+        {/* Coluna principal — Stepper */}
+        <div className="lg:col-span-2">
+          <div className="card p-4 mb-4">
+            <h2 className="font-medium text-slate-700 text-sm mb-1">🔍 Filtros do Relatório</h2>
+            <p className="text-xs text-slate-400">Complete os passos abaixo. Deixe sem seleção para incluir todos do nível e avançar.</p>
           </div>
 
-          {/* Nível 2 — Sindicatos */}
-          <div className={'mb-4 transition-all ' + (nivel3Ativo ? '' : 'opacity-40 pointer-events-none')}>
-            <div className="flex items-center gap-2 mb-2">
-              <span className={'w-5 h-5 rounded-full text-xs flex items-center justify-center font-bold flex-shrink-0 ' + (nivel3Ativo ? 'bg-brand-600 text-white' : 'bg-slate-200 text-slate-400')}>2</span>
-              <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Sindicatos</p>
-              {!nivel3Ativo && <p className="text-xs text-slate-400">— selecione a empresa primeiro</p>}
-            </div>
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-              <MultiSelect label="Sindicato(s) Laboral(is)"
-                options={opcoesLaboral.map(s => ({ value: s.id, label: (s.sigla?s.sigla+' — ':'')+s.razao_social }))}
-                value={filtros.sindicatosLab} onChange={setSindLab}
-                disabled={!nivel3Ativo}/>
-              <MultiSelect label="Sindicato(s) Patronal(is)"
-                options={opcoesPatronal.map(s => ({ value: s.id, label: (s.sigla?s.sigla+' — ':'')+s.razao_social }))}
-                value={filtros.sindicatosPat} onChange={setSindPat}
-                disabled={!nivel3Ativo}/>
-            </div>
-          </div>
+          {/* Passo 1 — Empresa */}
+          <StepCard number="1" title="Empresa" subtitle="Busque por nome ou CNPJ"
+            active={stepAtivo === 1} done={confirmados.has(1)} locked={false}
+            summary={resumo(1)}
+            onEdit={() => editar(1)}
+            onConfirm={() => confirmar(1)}
+            onSkip={() => confirmar(1, true)}>
+            <CheckList
+              opcoes={todasEmpresas.map(e => ({ value: e.id, label: e.razao_social, cnpj: e.cnpj || '' }))}
+              selecionados={S.empresas}
+              onChange={v => setSels(prev => ({ ...prev, empresas: v }))}
+              busca={buscas.emp}
+              onBusca={v => setBuscas(b => ({ ...b, emp: v }))}/>
+          </StepCard>
 
-          {/* Nível 3 — Instrumento */}
-          <div className={'mb-4 transition-all ' + (nivel4Ativo ? '' : 'opacity-40 pointer-events-none')}>
-            <div className="flex items-center gap-2 mb-2">
-              <span className={'w-5 h-5 rounded-full text-xs flex items-center justify-center font-bold flex-shrink-0 ' + (nivel4Ativo ? 'bg-brand-600 text-white' : 'bg-slate-200 text-slate-400')}>3</span>
-              <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Instrumento e Vigência</p>
-              {!nivel4Ativo && <p className="text-xs text-slate-400">— selecione a empresa primeiro</p>}
-            </div>
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-              <MultiSelect label="Instrumento(s) Coletivo(s)"
-                options={opcoesInstrumentos}
-                value={filtros.instrumentos} onChange={setInstrumentos}
-                disabled={!nivel4Ativo}/>
+          {/* Passo 2 — Operação */}
+          <StepCard number="2" title="Operação"
+            subtitle={opcoesOp.length + ' operação(ões) disponível(is) para a seleção acima'}
+            active={stepAtivo === 2} done={confirmados.has(2)} locked={stepAtivo < 2 && !confirmados.has(1)}
+            summary={resumo(2)}
+            onEdit={() => editar(2)}
+            onConfirm={() => confirmar(2)}
+            onSkip={() => confirmar(2, true)}>
+            <CheckList
+              opcoes={opcoesOp.map(o => ({ value: o.id, label: o.nome + (o.codigo ? ' (' + o.codigo + ')' : ''), cnpj: '' }))}
+              selecionados={S.operacoes}
+              onChange={v => setSels(prev => ({ ...prev, operacoes: v }))}
+              busca={buscas.op}
+              onBusca={v => setBuscas(b => ({ ...b, op: v }))}/>
+          </StepCard>
+
+          {/* Passo 3 — Sindicatos */}
+          <StepCard number="3" title="Sindicatos"
+            subtitle="Laboral e patronal disponíveis para a seleção acima"
+            active={stepAtivo === 3} done={confirmados.has(3)} locked={stepAtivo < 3 && !confirmados.has(2)}
+            summary={resumo(3)}
+            onEdit={() => editar(3)}
+            onConfirm={() => confirmar(3)}
+            onSkip={() => confirmar(3, true)}>
+            <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="label">Vigência</label>
-                <select className="input" value={filtros.vigencia} onChange={e => { setFiltros({...filtros, vigencia:e.target.value}); setPreview(null) }}>
-                  <option value="">Todos (vigentes e vencidos)</option>
-                  <option value="vigente">Somente vigentes</option>
-                  <option value="alerta">Vence em 60 dias</option>
-                  <option value="vencido">Somente vencidos</option>
-                  <option value="ultimo_vigente">Último por operação (vigente ou mais recente)</option>
+                <p className="text-xs font-medium text-slate-600 mb-1.5">Sindicato Laboral</p>
+                <CheckList
+                  opcoes={opcoesLab.map(s => ({ value: s.id, label: (s.sigla ? s.sigla + ' — ' : '') + s.razao_social, cnpj: s.cnpj || '' }))}
+                  selecionados={S.sindicatosLab}
+                  onChange={v => setSels(prev => ({ ...prev, sindicatosLab: v }))}
+                  busca={buscas.sindLab}
+                  onBusca={v => setBuscas(b => ({ ...b, sindLab: v }))}/>
+              </div>
+              <div>
+                <p className="text-xs font-medium text-slate-600 mb-1.5">Sindicato Patronal</p>
+                <CheckList
+                  opcoes={opcoesPat.map(s => ({ value: s.id, label: (s.sigla ? s.sigla + ' — ' : '') + s.razao_social, cnpj: s.cnpj || '' }))}
+                  selecionados={S.sindicatosPat}
+                  onChange={v => setSels(prev => ({ ...prev, sindicatosPat: v }))}
+                  busca={buscas.sindPat}
+                  onBusca={v => setBuscas(b => ({ ...b, sindPat: v }))}/>
+              </div>
+            </div>
+          </StepCard>
+
+          {/* Passo 4 — Instrumento + Vigência */}
+          <StepCard number="4" title="Instrumento e Vigência"
+            subtitle={opcoesInst.length + ' instrumento(s) disponível(is) para a seleção acima'}
+            active={stepAtivo === 4} done={confirmados.has(4)} locked={stepAtivo < 4 && !confirmados.has(3)}
+            summary={resumo(4)}
+            onEdit={() => editar(4)}
+            onConfirm={() => confirmar(4)}
+            onSkip={() => confirmar(4, true)}>
+            <CheckList
+              opcoes={opcoesInst}
+              selecionados={S.instrumentos}
+              onChange={v => setSels(prev => ({ ...prev, instrumentos: v }))}
+              busca={buscas.inst}
+              onBusca={v => setBuscas(b => ({ ...b, inst: v }))}/>
+            <div className="mt-3">
+              <label className="label">Vigência</label>
+              <select className="input" value={S.vigencia}
+                onChange={e => setSels(prev => ({ ...prev, vigencia: e.target.value }))}>
+                <option value="">Todos (vigentes e vencidos)</option>
+                <option value="vigente">Somente vigentes</option>
+                <option value="alerta">Vence em 60 dias</option>
+                <option value="vencido">Somente vencidos</option>
+                <option value="ultimo_vigente">Último por operação (vigente ou mais recente)</option>
+              </select>
+            </div>
+          </StepCard>
+
+          {/* Filtro de cláusulas — opcional, sempre visível */}
+          <div className="card p-4">
+            <div className="flex items-center gap-2 mb-3">
+              <div className="w-7 h-7 rounded-full bg-slate-100 text-slate-400 text-sm font-medium flex items-center justify-center flex-shrink-0">+</div>
+              <div>
+                <p className="font-medium text-sm text-slate-600">Filtro de Cláusulas</p>
+                <p className="text-xs text-slate-400">Opcional — deixe em branco para exportar todas as categorias</p>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="label">Categoria(s)</label>
+                <select multiple className="input text-xs" style={{ height: 120 }}
+                  value={S.categorias}
+                  onChange={e => setSels(prev => ({ ...prev, categorias: [...e.target.selectedOptions].map(o => o.value), subcategorias: [] }))}>
+                  {Object.keys(CATEGORIAS).map(c => <option key={c}>{c}</option>)}
                 </select>
+                <p className="text-[10px] text-slate-400 mt-0.5">
+                  Ctrl+clique para múltiplos. {S.categorias.length === 0 ? 'Todas' : S.categorias.length + ' selecionada(s)'}
+                </p>
+              </div>
+              <div>
+                <label className="label">Subcategoria(s)</label>
+                <select multiple className="input text-xs" style={{ height: 120 }}
+                  value={S.subcategorias}
+                  onChange={e => setSels(prev => ({ ...prev, subcategorias: [...e.target.selectedOptions].map(o => o.value) }))}>
+                  {subcatsDisponiveis.map(s => <option key={s}>{s}</option>)}
+                </select>
+                <p className="text-[10px] text-slate-400 mt-0.5">
+                  Ctrl+clique para múltiplos. {S.subcategorias.length === 0 ? 'Todas' : S.subcategorias.length + ' selecionada(s)'}
+                </p>
               </div>
             </div>
           </div>
+        </div>
 
-          {/* Nível 4 — Categorias (sempre visível) */}
-          <div className="mb-4">
-            <div className="flex items-center gap-2 mb-2">
-              <span className="w-5 h-5 rounded-full bg-slate-300 text-white text-xs flex items-center justify-center font-bold flex-shrink-0">4</span>
-              <p className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Filtro de Cláusulas (opcional)</p>
-            </div>
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-              <MultiSelect label="Categoria(s)"
-                options={Object.keys(CATEGORIAS).map(c => ({ value: c, label: c }))}
-                value={filtros.categorias}
-                onChange={v => { setFiltros({...filtros, categorias:v, subcategorias:[]}); setPreview(null) }}/>
-              <MultiSelect label="Subcategoria(s)"
-                options={[...new Map(subcatsDisponiveis.map(o => [o.value, o])).values()]}
-                value={filtros.subcategorias}
-                onChange={v => { setFiltros({...filtros, subcategorias:v}); setPreview(null) }}/>
-            </div>
-          </div>
+        {/* Coluna lateral — Resumo + Exportar */}
+        <div>
+          <div className="card p-4 sticky top-4">
+            <h3 className="font-medium text-slate-700 text-sm mb-3">Resumo da seleção</h3>
 
-          {/* Prévia e exportar */}
-          <div className="bg-surface-50 rounded-lg p-3 mb-4 flex items-center justify-between flex-wrap gap-2">
-            <div>
+            <div className="space-y-2 mb-4 text-xs">
+              {[
+                { label: 'Empresa', val: resumo(1), done: confirmados.has(1) },
+                { label: 'Operação', val: resumo(2), done: confirmados.has(2) },
+                { label: 'Sindicatos', val: resumo(3), done: confirmados.has(3) },
+                { label: 'Instrumento', val: resumo(4), done: confirmados.has(4) },
+              ].map(({ label, val, done }) => (
+                <div key={label} className="flex items-start gap-2">
+                  <span className={'w-3.5 h-3.5 rounded-full mt-0.5 flex-shrink-0 ' + (done ? 'bg-emerald-400' : 'bg-slate-200')}/>
+                  <div className="min-w-0">
+                    <span className="font-medium text-slate-600">{label}:</span>{' '}
+                    <span className={'text-slate-500 ' + (!done ? 'italic' : '')}>{done ? val : '—'}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="bg-surface-50 rounded-lg p-3 mb-4">
               <p className="text-sm font-medium text-slate-700">
-                {instsPreview.length} instrumento{instsPreview.length !== 1 ? 's' : ''} selecionado{instsPreview.length !== 1 ? 's' : ''}
-                {preview !== null ? ' — ' + preview.count + ' cláusula' + (preview.count !== 1 ? 's' : '') : ''}
+                {instsParaExportar.length} instrumento(s)
+                {preview ? ' · ' + preview.count + ' cláusula(s)' : ''}
               </p>
-              {instsPreview.length > 0 && (
-                <p className="text-xs text-slate-400 mt-0.5">
-                  {instsPreview.slice(0, 3).map(i => i.nome).join(', ')}{instsPreview.length > 3 ? ' e mais ' + (instsPreview.length - 3) + '...' : ''}
+              {instsParaExportar.length > 0 && (
+                <p className="text-xs text-slate-400 mt-1">
+                  {instsParaExportar.slice(0, 2).map(i => i.nome).join(', ')}
+                  {instsParaExportar.length > 2 && ` +${instsParaExportar.length - 2}`}
                 </p>
               )}
             </div>
-            <button className="btn-secondary text-xs py-1" onClick={calcularPreview}>Calcular prévia</button>
+
+            {!tudo4Confirmado && (
+              <p className="text-xs text-slate-400 italic mb-3 text-center">Complete ao menos o passo 1 para exportar</p>
+            )}
+
+            <div className="space-y-2">
+              <button className="btn-secondary text-xs w-full py-1.5" onClick={calcularPreview}>
+                Calcular prévia de cláusulas
+              </button>
+              <button className="btn-primary w-full"
+                onClick={exportarExcel}
+                disabled={loading || instsParaExportar.length === 0 || !tudo4Confirmado}>
+                {loading ? '⏳ Gerando...' : '📊 Exportar Excel'}
+              </button>
+              <button className="btn-secondary w-full"
+                onClick={exportarPDF}
+                disabled={loading || instsParaExportar.length === 0 || !tudo4Confirmado}>
+                {loading ? '⏳ Gerando...' : '📄 Exportar PDF'}
+              </button>
+              <button className="text-xs text-slate-400 hover:text-slate-600 w-full py-1 transition-colors"
+                onClick={() => {
+                  setSels({ empresas:[], operacoes:[], sindicatosLab:[], sindicatosPat:[], instrumentos:[], vigencia:'', categorias:[], subcategorias:[] })
+                  setConfirmados(new Set())
+                  setStepAtivo(1)
+                  setBuscas({ emp:'', op:'', sindLab:'', sindPat:'', inst:'' })
+                  setPreview(null)
+                }}>
+                ↺ Reiniciar filtros
+              </button>
+            </div>
           </div>
 
-          <div className="flex gap-3 flex-wrap">
-            <button className="btn-primary" onClick={exportarExcel} disabled={loading || instsPreview.length === 0}>
-              {loading ? '⏳ Gerando...' : '📊 Exportar Excel'}
-            </button>
-            <button className="btn-secondary" onClick={exportarPDF} disabled={loading || instsPreview.length === 0}>
-              {loading ? '⏳ Gerando...' : '📄 Exportar PDF'}
-            </button>
-            <button className="btn-secondary text-slate-400" onClick={() => {
-              setFiltros({ empresas:[], operacoes:[], sindicatosLab:[], sindicatosPat:[], categorias:[], subcategorias:[], instrumentos:[], vigencia:'' })
-              setPreview(null)
-            }}>Limpar filtros</button>
+          <div className="card p-4 mt-3 border-2 border-dashed border-slate-200">
+            <h3 className="font-medium text-slate-600 text-sm mb-1">⚖️ Relatório Comparativo</h3>
+            <p className="text-xs text-slate-400 mb-3">Para comparar dois instrumentos use a página de Comparativo — o export está disponível lá.</p>
+            <a href="#/comparativo" className="btn-secondary text-xs">Ir para Comparativo →</a>
           </div>
         </div>
 
-        <div className="card p-5 border-2 border-dashed border-slate-200">
-          <h2 className="font-display font-semibold text-slate-700 mb-1">⚖️ Relatório Comparativo</h2>
-          <p className="text-sm text-slate-500 mb-4">Para comparar dois instrumentos, use a página de Comparativo — o export está disponível lá após rodar a comparação.</p>
-          <a href="#/comparativo" className="btn-secondary text-sm">Ir para Comparativo →</a>
-        </div>
       </div>
     </div>
   )
