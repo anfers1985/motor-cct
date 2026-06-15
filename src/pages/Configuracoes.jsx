@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { PROVEDORES, getAIConfig, saveAIConfig, testarConexao } from '../services/ai'
+import { ultimosMeses, getIndicesManuais, setIndicesManuais } from '../services/indices'
 
 export default function Configuracoes() {
   const [config, setConfig] = useState({ provedor: 'gemini', chave: '', modelo: '' })
@@ -7,6 +8,28 @@ export default function Configuracoes() {
   const [testando, setTestando] = useState(false)
   const [testeResult, setTesteResult] = useState(null)
   const [salvo, setSalvo] = useState(false)
+
+  // Índices econômicos manuais (fallback quando a API do BCB não responder)
+  const [indicesManuais, setIndicesManuaisState] = useState({})
+  const [indicesSalvo, setIndicesSalvo] = useState(false)
+  const meses = ultimosMeses(12)
+
+  useEffect(() => {
+    setIndicesManuaisState(getIndicesManuais())
+  }, [])
+
+  function setIndiceValor(mesKey, campo, valor) {
+    setIndicesManuaisState(prev => ({
+      ...prev,
+      [mesKey]: { ...prev[mesKey], [campo]: valor === '' ? undefined : parseFloat(valor) },
+    }))
+  }
+
+  function salvarIndices() {
+    setIndicesManuais(indicesManuais)
+    setIndicesSalvo(true)
+    setTimeout(() => setIndicesSalvo(false), 2000)
+  }
 
   useEffect(() => {
     const c = getAIConfig()
@@ -130,6 +153,52 @@ export default function Configuracoes() {
               </div>
             ))}
           </div>
+        </div>
+
+        {/* Índices econômicos manuais — fallback IPCA/INPC */}
+        <div className="card p-5 mt-4">
+          <h2 className="font-display font-semibold text-slate-700 mb-1">📈 Índices Econômicos (IPCA / INPC)</h2>
+          <p className="text-xs text-slate-400 mb-4">
+            O Dashboard busca o IPCA e o INPC automaticamente na API do Banco Central. Se a API não estiver
+            disponível para algum mês, os valores informados aqui (variação mensal %) serão usados como fallback.
+            Deixe em branco para usar somente a API.
+          </p>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-xs text-slate-400 border-b border-slate-100">
+                  <th className="py-2 pr-3">Mês</th>
+                  <th className="py-2 pr-3">IPCA (%)</th>
+                  <th className="py-2 pr-3">INPC (%)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {meses.map(m => (
+                  <tr key={m.key} className="border-b border-slate-50">
+                    <td className="py-1.5 pr-3 text-slate-600 capitalize">{m.label}</td>
+                    <td className="py-1.5 pr-3">
+                      <input type="number" step="0.01" placeholder="—" className="input text-sm w-24 py-1"
+                        value={indicesManuais[m.key]?.ipca ?? ''}
+                        onChange={e => setIndiceValor(m.key, 'ipca', e.target.value)}/>
+                    </td>
+                    <td className="py-1.5 pr-3">
+                      <input type="number" step="0.01" placeholder="—" className="input text-sm w-24 py-1"
+                        value={indicesManuais[m.key]?.inpc ?? ''}
+                        onChange={e => setIndiceValor(m.key, 'inpc', e.target.value)}/>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <button className="btn-primary mt-4" onClick={salvarIndices}>
+            {indicesSalvo ? '✅ Salvo!' : 'Salvar Índices'}
+          </button>
+          <p className="text-xs text-slate-400 mt-2">
+            Fonte oficial: <a href="https://www.ibge.gov.br/estatisticas/economicas/precos-e-custos/9256-indice-nacional-de-precos-ao-consumidor-amplo.html" target="_blank" rel="noopener noreferrer" className="text-brand-600 hover:underline">IBGE — IPCA/INPC</a>
+          </p>
         </div>
       </div>
     </div>
