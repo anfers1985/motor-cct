@@ -4,6 +4,8 @@ import { useAuth } from '../hooks/useAuth'
 import { CATEGORIAS, CATEGORIA_CORES, TAGS_PREDEFINIDAS } from '../utils/categorias'
 import { ordenarClausulas, toNumeroOrdinal } from '../utils/ordenacao'
 import Badge from '../components/UI/Badge'
+import CheckList from '../components/UI/CheckList'
+import StepCard from '../components/UI/StepCard'
 import { gerarExcelClausulas } from '../services/reports/excelReport'
 import { gerarPDFClausulas } from '../services/reports/pdfReport'
 
@@ -16,26 +18,22 @@ export default function Clausulas() {
   const [operacoes,  setOperacoes]  = useState([])
   const [sindicatos, setSindicatos] = useState([])
 
-  // Filtros para encontrar o instrumento
-  const [buscaEmpresa,   setBuscaEmpresa]   = useState('')
-  const [filtroOperacao, setFiltroOperacao] = useState('')
-  const [filtroSindLab,  setFiltroSindLab]  = useState('')
-  const [filtroSindPat,  setFiltroSindPat]  = useState('')
+  // Stepper
+  const [stepAtivo,   setStepAtivo]   = useState(1)
+  const [confirmados, setConfirmados] = useState(new Set())
+  const [sels, setSels] = useState({
+    empresas: [], operacoes: [], sindicatosLab: [], sindicatosPat: [],
+    instrumento: '', categoria: '', subcategoria: '', busca: '',
+  })
+  const [buscas, setBuscas] = useState({ emp: '', op: '', sindLab: '', sindPat: '', inst: '' })
 
-  // Filtros dentro do instrumento selecionado
-  const [filtros, setFiltros] = useState({ instrumento: '', categoria: '', subcategoria: '', busca: '' })
+  // Resultado
   const [clausulas, setClausulas] = useState([])
   const [subcatsDisponiveis, setSubcatsDisponiveis] = useState([])
   const [loading, setLoading] = useState(false)
-
-  // Ordenação
   const [ordem, setOrdem] = useState('padrao')
-
-  // Expand/collapse
-  const [expandidos,    setExpandidos]    = useState(new Set())
+  const [expandidos, setExpandidos] = useState(new Set())
   const [modoExpandido, setModoExpandido] = useState(false)
-
-  // Seleção
   const [selecionados, setSelecionados] = useState(new Set())
 
   useEffect(() => {
@@ -45,8 +43,8 @@ export default function Clausulas() {
         .select('id,nome,tipo,empresa_id,operacao_id,sindicato_laboral_id,sindicato_patronal_id')
         .eq('user_id', user.id).eq('status_processamento', 'processado').order('nome'),
       supabase.from('empresas').select('id,razao_social,cnpj').eq('user_id', user.id).order('razao_social'),
-      supabase.from('operacoes').select('id,nome').eq('user_id', user.id).order('nome'),
-      supabase.from('sindicatos').select('id,razao_social,sigla,tipo').eq('user_id', user.id).order('razao_social'),
+      supabase.from('operacoes').select('id,nome,codigo').eq('user_id', user.id).order('nome'),
+      supabase.from('sindicatos').select('id,razao_social,sigla,tipo,cnpj').eq('user_id', user.id).order('razao_social'),
     ]).then(([{data:insts},{data:emps},{data:ops},{data:sinds}]) => {
       setTodosInstrumentos(insts || [])
       setEmpresas(emps || [])
@@ -55,56 +53,115 @@ export default function Clausulas() {
     })
   }, [user])
 
-  // Mapa rápido para lookup
-  const empMap = Object.fromEntries(empresas.map(e => [e.id, e]))
+  const empMap  = Object.fromEntries(empresas.map(e => [e.id, e]))
+  const opMap   = Object.fromEntries(operacoes.map(o => [o.id, o]))
+  const sindMap = Object.fromEntries(sindicatos.map(s => [s.id, s]))
 
-  // Instrumentos filtrados pelos critérios de busca
-  const instrumentosFiltrados = todosInstrumentos.filter(i => {
-    if (buscaEmpresa) {
-      const emp = empMap[i.empresa_id]
-      const q = buscaEmpresa.toLowerCase()
-      const cnpjQ = buscaEmpresa.replace(/\D/g, '')
-      const nomeMatch = emp?.razao_social?.toLowerCase().includes(q)
-      const cnpjMatch = cnpjQ.length >= 3 && (emp?.cnpj || '').replace(/\D/g, '').includes(cnpjQ)
-      if (!nomeMatch && !cnpjMatch) return false
+  const laboral  = sindicatos.filter(s => s.tipo === 'laboral')
+  const patronal = sindicatos.filter(s => s.tipo === 'patronal')
+
+  // ── Cascade de opções ────────────────────────────────────────────────────
+  const instsPorEmpresa = sels.empresas.length > 0
+    ? todosInstrumentos.filter(i => sels.empresas.includes(i.empresa_id))
+    : todosInstrumentos
+
+  const opcoesOp = operacoes.filter(o => instsPorEmpresa.some(i => i.operacao_id === o.id))
+
+  const instsPorOp = sels.operacoes.length > 0
+    ? instsPorEmpresa.filter(i => sels.operacoes.includes(i.operacao_id))
+    : instsPorEmpresa
+
+  const opcoesLab = laboral.filter(s  => instsPorOp.some(i => i.sindicato_laboral_id  === s.id))
+  const opcoesPat = patronal.filter(s => instsPorOp.some(i => i.sindicato_patronal_id === s.id))
+
+  const instsPorSind = (() => {
+    let arr = instsPorOp
+    if (sels.sindicatosLab.length > 0) arr = arr.filter(i => sels.sindicatosLab.includes(i.sindicato_laboral_id))
+    if (sels.sindicatosPat.length > 0) arr = arr.filter(i => sels.sindicatosPat.includes(i.sindicato_patronal_id))
+    return arr
+  })()
+
+  const opcoesInst = instsPorSind.map(i => ({
+    value: i.id, label: i.tipo + ' — ' + i.nome + (empMap[i.empresa_id] ? ` (${empMap[i.empresa_id].razao_social})` : ''),
+  }))
+
+  // ── Confirmar / editar ────────────────────────────────────────────────────
+  function confirmar(step, pularTodos = false) {
+    if (pularTodos) {
+      if (step === 1) setSels(prev => ({ ...prev, empresas: [] }))
+      if (step === 2) setSels(prev => ({ ...prev, operacoes: [] }))
+      if (step === 3) setSels(prev => ({ ...prev, sindicatosLab: [], sindicatosPat: [] }))
     }
-    if (filtroOperacao && i.operacao_id !== filtroOperacao) return false
-    if (filtroSindLab  && i.sindicato_laboral_id  !== filtroSindLab)  return false
-    if (filtroSindPat  && i.sindicato_patronal_id !== filtroSindPat)  return false
-    return true
-  })
+    const novos = new Set(confirmados)
+    novos.add(step)
+    for (let s = step + 1; s <= 4; s++) novos.delete(s)
+    setConfirmados(novos)
+    setStepAtivo(step + 1)
+  }
+
+  function editar(step) {
+    setStepAtivo(step)
+    const novos = new Set(confirmados)
+    for (let s = step; s <= 4; s++) novos.delete(s)
+    setConfirmados(novos)
+    if (step <= 1) setSels(prev => ({ ...prev, operacoes: [], sindicatosLab: [], sindicatosPat: [], instrumento: '' }))
+    else if (step === 2) setSels(prev => ({ ...prev, sindicatosLab: [], sindicatosPat: [], instrumento: '' }))
+    else if (step === 3) setSels(prev => ({ ...prev, instrumento: '' }))
+  }
+
+  function resumo(step) {
+    const label2 = (arr, map, fn) => {
+      if (!arr.length) return null
+      const nomes = arr.slice(0, 2).map(id => fn(map[id])).filter(Boolean)
+      return nomes.join(' · ') + (arr.length > 2 ? ` +${arr.length - 2}` : '')
+    }
+    switch (step) {
+      case 1: return sels.empresas.length === 0 ? 'Todas as empresas' : label2(sels.empresas, empMap, e => e?.razao_social)
+      case 2: return sels.operacoes.length === 0 ? 'Todas as operações' : label2(sels.operacoes, opMap, o => o?.nome)
+      case 3: {
+        const lab = sels.sindicatosLab.length === 0 ? 'Todos laborais' : label2(sels.sindicatosLab, sindMap, s => s?.sigla || s?.razao_social)
+        const pat = sels.sindicatosPat.length === 0 ? 'Todos patronais' : label2(sels.sindicatosPat, sindMap, s => s?.sigla || s?.razao_social)
+        return lab + ' | ' + pat
+      }
+      case 4: {
+        const inst = todosInstrumentos.find(i => i.id === sels.instrumento)
+        return inst ? inst.tipo + ' — ' + inst.nome : ''
+      }
+      default: return ''
+    }
+  }
 
   // Se o instrumento selecionado sair da lista filtrada, limpa
   useEffect(() => {
-    if (filtros.instrumento && !instrumentosFiltrados.some(i => i.id === filtros.instrumento)) {
-      setFiltros(f => ({ ...f, instrumento: '', categoria: '', subcategoria: '' }))
+    if (sels.instrumento && !instsPorSind.some(i => i.id === sels.instrumento)) {
+      setSels(prev => ({ ...prev, instrumento: '', categoria: '', subcategoria: '' }))
     }
-  }, [instrumentosFiltrados.length])
+  }, [instsPorSind.length])
 
-  // Subcategorias disponíveis para categoria selecionada
+  // Subcategorias disponíveis
   useEffect(() => {
-    if (!filtros.instrumento || !filtros.categoria) { setSubcatsDisponiveis([]); return }
+    if (!sels.instrumento || !sels.categoria) { setSubcatsDisponiveis([]); return }
     supabase.from('clausulas').select('subcategoria')
-      .eq('instrumento_id', filtros.instrumento).eq('user_id', user.id).eq('categoria', filtros.categoria)
+      .eq('instrumento_id', sels.instrumento).eq('user_id', user.id).eq('categoria', sels.categoria)
       .then(({ data }) => {
         setSubcatsDisponiveis([...new Set((data || []).map(c => c.subcategoria).filter(Boolean))].sort())
       })
-  }, [filtros.instrumento, filtros.categoria])
+  }, [sels.instrumento, sels.categoria])
 
   // Buscar cláusulas
   useEffect(() => {
-    if (!filtros.instrumento) { setClausulas([]); return }
+    if (!sels.instrumento) { setClausulas([]); return }
     setLoading(true)
-    let q = supabase.from('clausulas').select('*').eq('instrumento_id', filtros.instrumento).eq('user_id', user.id)
-    if (filtros.categoria)    q = q.eq('categoria', filtros.categoria)
-    if (filtros.subcategoria) q = q.eq('subcategoria', filtros.subcategoria)
-    if (filtros.busca)        q = q.or(`titulo.ilike.%${filtros.busca}%,conteudo.ilike.%${filtros.busca}%`)
+    let q = supabase.from('clausulas').select('*').eq('instrumento_id', sels.instrumento).eq('user_id', user.id)
+    if (sels.categoria)    q = q.eq('categoria', sels.categoria)
+    if (sels.subcategoria) q = q.eq('subcategoria', sels.subcategoria)
+    if (sels.busca)        q = q.or(`titulo.ilike.%${sels.busca}%,conteudo.ilike.%${sels.busca}%`)
     q.then(({ data }) => {
       setClausulas(ordenarClausulas(data || []))
       setLoading(false)
       setSelecionados(new Set())
     })
-  }, [filtros])
+  }, [sels.instrumento, sels.categoria, sels.subcategoria, sels.busca])
 
   const clausulasOrdenadas = (() => {
     if (ordem === 'asc')  return [...clausulas].sort((a,b)=>toNumeroOrdinal(a.numero)-toNumeroOrdinal(b.numero))
@@ -133,7 +190,7 @@ export default function Clausulas() {
     todosSelecionados ? setSelecionados(new Set()) : setSelecionados(new Set(clausulasOrdenadas.map(c => c.id)))
   }
 
-  const instObj = todosInstrumentos.find(i => i.id === filtros.instrumento)
+  const instObj = todosInstrumentos.find(i => i.id === sels.instrumento)
   function exportar(tipo) {
     const itens = selecionados.size > 0
       ? clausulasOrdenadas.filter(c => selecionados.has(c.id))
@@ -142,10 +199,7 @@ export default function Clausulas() {
     else gerarPDFClausulas(itens, instObj)
   }
 
-  const temFiltroInstrumento = buscaEmpresa || filtroOperacao || filtroSindLab || filtroSindPat
-  function limparFiltrosInstrumento() {
-    setBuscaEmpresa(''); setFiltroOperacao(''); setFiltroSindLab(''); setFiltroSindPat('')
-  }
+  const passo4Liberado = confirmados.has(3)
 
   return (
     <div className="pb-24">
@@ -154,102 +208,106 @@ export default function Clausulas() {
         <p className="text-slate-500 text-sm">Busque e navegue pelas cláusulas de qualquer instrumento processado</p>
       </div>
 
-      <div className="card p-4 mb-4">
-        {/* Filtros para encontrar o instrumento */}
-        <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">Encontrar instrumento por</p>
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-3">
-          <div className="lg:col-span-2">
-            <label className="label">Empresa (nome ou CNPJ)</label>
-            <input className="input" placeholder="Ex: Transportadora XYZ ou 12.345.678/0001"
-              value={buscaEmpresa} onChange={e => setBuscaEmpresa(e.target.value)}/>
+      {/* Stepper */}
+      <StepCard number="1" title="Empresa" subtitle="Busque por nome ou CNPJ"
+        active={stepAtivo === 1} done={confirmados.has(1)} locked={false}
+        summary={resumo(1)} onEdit={() => editar(1)}
+        onConfirm={() => confirmar(1)} onSkip={() => confirmar(1, true)}>
+        <CheckList
+          opcoes={empresas.map(e => ({ value: e.id, label: e.razao_social, cnpj: e.cnpj || '' }))}
+          selecionados={sels.empresas}
+          onChange={v => setSels(prev => ({ ...prev, empresas: v }))}
+          busca={buscas.emp} onBusca={v => setBuscas(b => ({ ...b, emp: v }))}/>
+      </StepCard>
+
+      <StepCard number="2" title="Operação"
+        subtitle={opcoesOp.length + ' operação(ões) disponível(is)'}
+        active={stepAtivo === 2} done={confirmados.has(2)} locked={stepAtivo < 2 && !confirmados.has(1)}
+        summary={resumo(2)} onEdit={() => editar(2)}
+        onConfirm={() => confirmar(2)} onSkip={() => confirmar(2, true)}>
+        <CheckList
+          opcoes={opcoesOp.map(o => ({ value: o.id, label: o.nome + (o.codigo ? ' (' + o.codigo + ')' : '') }))}
+          selecionados={sels.operacoes}
+          onChange={v => setSels(prev => ({ ...prev, operacoes: v }))}
+          busca={buscas.op} onBusca={v => setBuscas(b => ({ ...b, op: v }))}/>
+      </StepCard>
+
+      <StepCard number="3" title="Sindicatos" subtitle="Laboral e patronal disponíveis para a seleção acima"
+        active={stepAtivo === 3} done={confirmados.has(3)} locked={stepAtivo < 3 && !confirmados.has(2)}
+        summary={resumo(3)} onEdit={() => editar(3)}
+        onConfirm={() => confirmar(3)} onSkip={() => confirmar(3, true)}>
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <p className="text-xs font-medium text-slate-600 mb-1.5">Sindicato Laboral</p>
+            <CheckList
+              opcoes={opcoesLab.map(s => ({ value: s.id, label: (s.sigla?s.sigla+' — ':'')+s.razao_social, cnpj: s.cnpj||'' }))}
+              selecionados={sels.sindicatosLab}
+              onChange={v => setSels(prev => ({ ...prev, sindicatosLab: v }))}
+              busca={buscas.sindLab} onBusca={v => setBuscas(b => ({ ...b, sindLab: v }))}/>
           </div>
           <div>
-            <label className="label">Operação</label>
-            <select className="input" value={filtroOperacao} onChange={e => setFiltroOperacao(e.target.value)}>
+            <p className="text-xs font-medium text-slate-600 mb-1.5">Sindicato Patronal</p>
+            <CheckList
+              opcoes={opcoesPat.map(s => ({ value: s.id, label: (s.sigla?s.sigla+' — ':'')+s.razao_social, cnpj: s.cnpj||'' }))}
+              selecionados={sels.sindicatosPat}
+              onChange={v => setSels(prev => ({ ...prev, sindicatosPat: v }))}
+              busca={buscas.sindPat} onBusca={v => setBuscas(b => ({ ...b, sindPat: v }))}/>
+          </div>
+        </div>
+      </StepCard>
+
+      <StepCard number="4" title="Instrumento e Filtros de Cláusulas"
+        subtitle={opcoesInst.length + ' instrumento(s) disponível(is)'}
+        active={stepAtivo === 4} done={confirmados.has(4)} locked={stepAtivo < 4 && !passo4Liberado}
+        summary={resumo(4)} onEdit={() => editar(4)}
+        onConfirm={() => confirmar(4)}>
+        <div className="mb-4">
+          <label className="label">Instrumento</label>
+          <select className="input" value={sels.instrumento}
+            onChange={e => setSels(prev => ({ ...prev, instrumento: e.target.value, categoria: '', subcategoria: '' }))}>
+            <option value="">Selecione um instrumento...</option>
+            {opcoesInst.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </select>
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+          <div>
+            <label className="label">Categoria</label>
+            <select className="input" value={sels.categoria}
+              onChange={e => setSels(prev => ({ ...prev, categoria: e.target.value, subcategoria: '' }))}
+              disabled={!sels.instrumento}>
               <option value="">Todas</option>
-              {operacoes.map(o => <option key={o.id} value={o.id}>{o.nome}</option>)}
+              {Object.keys(CATEGORIAS).map(c => <option key={c}>{c}</option>)}
             </select>
           </div>
           <div>
-            {temFiltroInstrumento && (
-              <div className="flex items-end h-full pb-0.5">
-                <button className="btn-secondary text-xs w-full" onClick={limparFiltrosInstrumento}>✕ Limpar filtros</button>
-              </div>
-            )}
-          </div>
-          <div>
-            <label className="label">Sindicato Laboral</label>
-            <select className="input" value={filtroSindLab} onChange={e => setFiltroSindLab(e.target.value)}>
-              <option value="">Todos</option>
-              {sindicatos.filter(s=>s.tipo==='laboral').map(s => <option key={s.id} value={s.id}>{s.sigla ? s.sigla + ' — ' : ''}{s.razao_social}</option>)}
+            <label className="label">Subcategoria</label>
+            <select className="input" value={sels.subcategoria}
+              onChange={e => setSels(prev => ({ ...prev, subcategoria: e.target.value }))}
+              disabled={!sels.categoria || subcatsDisponiveis.length === 0}>
+              <option value="">Todas</option>
+              {subcatsDisponiveis.map(s => <option key={s}>{s}</option>)}
             </select>
           </div>
           <div>
-            <label className="label">Sindicato Patronal</label>
-            <select className="input" value={filtroSindPat} onChange={e => setFiltroSindPat(e.target.value)}>
-              <option value="">Todos</option>
-              {sindicatos.filter(s=>s.tipo==='patronal').map(s => <option key={s.id} value={s.id}>{s.sigla ? s.sigla + ' — ' : ''}{s.razao_social}</option>)}
-            </select>
-          </div>
-          {temFiltroInstrumento && (
-            <div className="lg:col-span-2 flex items-center">
-              <p className="text-xs text-brand-600">{instrumentosFiltrados.length} instrumento(s) encontrado(s)</p>
-            </div>
-          )}
-        </div>
-
-        {/* Filtros dentro do instrumento */}
-        <div className="border-t border-slate-100 pt-3 mt-1">
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-            <div className="col-span-2 lg:col-span-1">
-              <label className="label">Instrumento</label>
-              <select className="input" value={filtros.instrumento}
-                onChange={e => setFiltros({ ...filtros, instrumento: e.target.value, categoria: '', subcategoria: '' })}>
-                <option value="">Selecione um instrumento...</option>
-                {instrumentosFiltrados.map(i => {
-                  const emp = empMap[i.empresa_id]
-                  return <option key={i.id} value={i.id}>{i.tipo} — {i.nome}{emp ? ` (${emp.razao_social})` : ''}</option>
-                })}
-              </select>
-            </div>
-            <div>
-              <label className="label">Categoria</label>
-              <select className="input" value={filtros.categoria}
-                onChange={e => setFiltros({ ...filtros, categoria: e.target.value, subcategoria: '' })}
-                disabled={!filtros.instrumento}>
-                <option value="">Todas</option>
-                {Object.keys(CATEGORIAS).map(c => <option key={c}>{c}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="label">Subcategoria</label>
-              <select className="input" value={filtros.subcategoria}
-                onChange={e => setFiltros({ ...filtros, subcategoria: e.target.value })}
-                disabled={!filtros.categoria || subcatsDisponiveis.length === 0}>
-                <option value="">Todas</option>
-                {subcatsDisponiveis.map(s => <option key={s}>{s}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="label">Busca livre</label>
-              <input className="input" placeholder="Palavra no título ou conteúdo..."
-                value={filtros.busca} onChange={e => setFiltros({ ...filtros, busca: e.target.value })}/>
-            </div>
+            <label className="label">Busca livre</label>
+            <input className="input" placeholder="Palavra no título ou conteúdo..."
+              value={sels.busca} onChange={e => setSels(prev => ({ ...prev, busca: e.target.value }))}/>
           </div>
         </div>
-      </div>
+      </StepCard>
 
-      {!filtros.instrumento && (
-        <div className="card p-10 text-center text-slate-400">
+      {/* Resultado */}
+      {confirmados.has(4) && !sels.instrumento && (
+        <div className="card p-10 text-center text-slate-400 mt-4">
           <p className="text-4xl mb-3">🔍</p>
-          <p>Selecione um instrumento para visualizar as cláusulas</p>
+          <p>Selecione um instrumento no passo 4 para visualizar as cláusulas</p>
         </div>
       )}
 
-      {filtros.instrumento && loading && <p className="text-slate-400 text-sm">Carregando cláusulas...</p>}
+      {sels.instrumento && loading && <p className="text-slate-400 text-sm mt-4">Carregando cláusulas...</p>}
 
-      {filtros.instrumento && !loading && (
-        <>
+      {sels.instrumento && !loading && (
+        <div className="mt-4">
           <div className="flex items-center gap-2 mb-3 flex-wrap">
             <p className="text-xs text-slate-500 mr-1">{clausulasOrdenadas.length} cláusula(s)</p>
             <select className="input w-auto text-xs" value={ordem} onChange={e => setOrdem(e.target.value)}>
@@ -351,7 +409,7 @@ export default function Clausulas() {
               </div>
             ))}
           </div>
-        </>
+        </div>
       )}
 
       {selecionados.size > 0 && (
