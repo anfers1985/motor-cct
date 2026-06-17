@@ -109,6 +109,14 @@ export default function Clausulas() {
     else if (step === 3) setSels(prev => ({ ...prev, instrumento: '' }))
   }
 
+  function resetar() {
+    setStepAtivo(1)
+    setConfirmados(new Set())
+    setSels({ empresas:[], operacoes:[], sindicatosLab:[], sindicatosPat:[], instrumento:'', categoria:'', subcategoria:'', busca:'' })
+    setBuscas({ emp:'', op:'', sindLab:'', sindPat:'', inst:'' })
+    setClausulas([]); setSelecionados(new Set()); setExpandidos(new Set()); setModoExpandido(false)
+  }
+
   function resumo(step) {
     const label2 = (arr, map, fn) => {
       if (!arr.length) return null
@@ -203,9 +211,16 @@ export default function Clausulas() {
 
   return (
     <div className="pb-24">
-      <div className="mb-6">
-        <h1 className="font-display font-bold text-2xl text-slate-800">Consulta de Cláusulas</h1>
-        <p className="text-slate-500 text-sm">Busque e navegue pelas cláusulas de qualquer instrumento processado</p>
+      <div className="mb-6 flex items-start justify-between gap-4">
+        <div>
+          <h1 className="font-display font-bold text-2xl text-slate-800">Consulta de Cláusulas</h1>
+          <p className="text-slate-500 text-sm">Busque e navegue pelas cláusulas de qualquer instrumento processado</p>
+        </div>
+        {confirmados.size > 0 && (
+          <button onClick={resetar} className="btn-secondary text-xs py-1.5 flex-shrink-0 mt-1">
+            ↺ Recomeçar
+          </button>
+        )}
       </div>
 
       {/* Stepper */}

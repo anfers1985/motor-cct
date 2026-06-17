@@ -146,6 +146,13 @@ export default function Comparativo() {
     setResultado(null)
   }
 
+  function resetar(){
+    setStepAtivo(1); setConfirmados(new Set())
+    setSels({empresas:[],operacoes:[],sindicatosLab:[],sindicatosPat:[],instA:'',instB:''})
+    setBuscas({emp:'',op:'',sindLab:'',sindPat:''})
+    setResultado(null); setSelecionados(new Set()); setExpandidos(new Set()); setModoExpandido(false)
+  }
+
   function resumo(step){
     const label2=(arr,map,fn)=>{
       if(!arr.length) return null
@@ -241,9 +248,16 @@ export default function Comparativo() {
         mark.diff-add{background:#dcfce7;color:#166534;border-radius:2px;padding:0 1px}
       `}</style>
 
-      <div className="mb-6">
-        <h1 className="font-display font-bold text-2xl text-slate-800">Comparativo de Instrumentos</h1>
-        <p className="text-slate-500 text-sm">Compare dois instrumentos cláusula a cláusula — incluindo de empresas ou sindicatos diferentes</p>
+      <div className="mb-6 flex items-start justify-between gap-4">
+        <div>
+          <h1 className="font-display font-bold text-2xl text-slate-800">Comparativo de Instrumentos</h1>
+          <p className="text-slate-500 text-sm">Compare dois instrumentos cláusula a cláusula — incluindo de empresas ou sindicatos diferentes</p>
+        </div>
+        {confirmados.size > 0 && (
+          <button onClick={resetar} className="btn-secondary text-xs py-1.5 flex-shrink-0 mt-1">
+            ↺ Recomeçar
+          </button>
+        )}
       </div>
 
       {/* Stepper */}

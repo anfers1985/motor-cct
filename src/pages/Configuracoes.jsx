@@ -10,25 +10,50 @@ export default function Configuracoes() {
   const [salvo, setSalvo] = useState(false)
 
   // Índices econômicos manuais (fallback quando a API do BCB não responder)
-  const [indicesManuais, setIndicesManuaisState] = useState({})
+  const [linhas, setLinhas] = useState([])  // [{key:'YYYY-MM', ipca, inpc}]
   const [indicesSalvo, setIndicesSalvo] = useState(false)
-  const meses = ultimosMeses(12)
 
   useEffect(() => {
-    setIndicesManuaisState(getIndicesManuais())
+    const saved = getIndicesManuais()
+    const arr = Object.entries(saved)
+      .map(([key, val]) => ({ key, ipca: val.ipca ?? '', inpc: val.inpc ?? '' }))
+      .sort((a, b) => a.key.localeCompare(b.key))
+    setLinhas(arr.length > 0 ? arr : [])
   }, [])
 
-  function setIndiceValor(mesKey, campo, valor) {
-    setIndicesManuaisState(prev => ({
-      ...prev,
-      [mesKey]: { ...prev[mesKey], [campo]: valor === '' ? undefined : parseFloat(valor) },
-    }))
+  function adicionarLinha() {
+    const hoje = new Date()
+    const key = hoje.getFullYear() + '-' + String(hoje.getMonth() + 1).padStart(2, '0')
+    if (!linhas.some(l => l.key === key)) {
+      setLinhas(prev => [...prev, { key, ipca: '', inpc: '' }].sort((a,b)=>a.key.localeCompare(b.key)))
+    }
+  }
+
+  function atualizarLinha(key, campo, valor) {
+    setLinhas(prev => prev.map(l => l.key === key ? { ...l, [campo]: valor } : l))
+  }
+
+  function atualizarChave(oldKey, newKey) {
+    if (!newKey) return
+    setLinhas(prev => prev.map(l => l.key === oldKey ? { ...l, key: newKey } : l))
+  }
+
+  function removerLinha(key) {
+    setLinhas(prev => prev.filter(l => l.key !== key))
   }
 
   function salvarIndices() {
-    setIndicesManuais(indicesManuais)
+    const mapa = {}
+    for (const l of linhas) {
+      if (!l.key) continue
+      mapa[l.key] = {
+        ipca: l.ipca !== '' ? parseFloat(String(l.ipca).replace(',','.')) : undefined,
+        inpc: l.inpc !== '' ? parseFloat(String(l.inpc).replace(',','.')) : undefined,
+      }
+    }
+    setIndicesManuais(mapa)
     setIndicesSalvo(true)
-    setTimeout(() => setIndicesSalvo(false), 2000)
+    setTimeout(() => setIndicesSalvo(false), 2500)
   }
 
   useEffect(() => {
@@ -168,24 +193,40 @@ export default function Configuracoes() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-left text-xs text-slate-400 border-b border-slate-100">
-                  <th className="py-2 pr-3">Mês</th>
-                  <th className="py-2 pr-3">IPCA (%)</th>
-                  <th className="py-2 pr-3">INPC (%)</th>
+                  <th className="py-2 pr-3 font-medium">Mês / Ano</th>
+                  <th className="py-2 pr-3 font-medium">IPCA (% mensal)</th>
+                  <th className="py-2 pr-3 font-medium">INPC (% mensal)</th>
+                  <th className="py-2"></th>
                 </tr>
               </thead>
               <tbody>
-                {meses.map(m => (
-                  <tr key={m.key} className="border-b border-slate-50">
-                    <td className="py-1.5 pr-3 text-slate-600 capitalize">{m.label}</td>
-                    <td className="py-1.5 pr-3">
-                      <input type="number" step="0.01" placeholder="—" className="input text-sm w-24 py-1"
-                        value={indicesManuais[m.key]?.ipca ?? ''}
-                        onChange={e => setIndiceValor(m.key, 'ipca', e.target.value)}/>
+                {linhas.length === 0 && (
+                  <tr>
+                    <td colSpan="4" className="py-4 text-xs text-slate-400 italic text-center">
+                      Nenhum mês cadastrado. Clique em "+ Adicionar mês" para começar.
                     </td>
-                    <td className="py-1.5 pr-3">
-                      <input type="number" step="0.01" placeholder="—" className="input text-sm w-24 py-1"
-                        value={indicesManuais[m.key]?.inpc ?? ''}
-                        onChange={e => setIndiceValor(m.key, 'inpc', e.target.value)}/>
+                  </tr>
+                )}
+                {linhas.map(l => (
+                  <tr key={l.key} className="border-b border-slate-50">
+                    <td className="py-2 pr-3">
+                      <input type="month" className="input text-sm py-1 w-36"
+                        value={l.key}
+                        onChange={e => atualizarChave(l.key, e.target.value)}/>
+                    </td>
+                    <td className="py-2 pr-3">
+                      <input type="number" step="0.01" placeholder="ex: 0,44" className="input text-sm w-28 py-1"
+                        value={l.ipca}
+                        onChange={e => atualizarLinha(l.key, 'ipca', e.target.value)}/>
+                    </td>
+                    <td className="py-2 pr-3">
+                      <input type="number" step="0.01" placeholder="ex: 0,39" className="input text-sm w-28 py-1"
+                        value={l.inpc}
+                        onChange={e => atualizarLinha(l.key, 'inpc', e.target.value)}/>
+                    </td>
+                    <td className="py-2">
+                      <button onClick={() => removerLinha(l.key)}
+                        className="text-xs text-slate-400 hover:text-red-500 transition-colors px-2">✕</button>
                     </td>
                   </tr>
                 ))}
@@ -193,9 +234,15 @@ export default function Configuracoes() {
             </table>
           </div>
 
-          <button className="btn-primary mt-4" onClick={salvarIndices}>
-            {indicesSalvo ? '✅ Salvo!' : 'Salvar Índices'}
-          </button>
+          <div className="flex gap-3 mt-4 flex-wrap items-center">
+            <button className="btn-secondary text-sm" onClick={adicionarLinha}>+ Adicionar mês</button>
+            <button className="btn-primary" onClick={salvarIndices}>
+              {indicesSalvo ? '✅ Índices salvos!' : 'Salvar Índices'}
+            </button>
+          </div>
+          <p className="text-xs text-slate-400 mt-2">
+            Você pode adicionar qualquer mês/ano. Digite a variação mensal (ex: 0.44 para 0,44%). Fonte oficial:{' '}
+          </p>
           <p className="text-xs text-slate-400 mt-2">
             Fonte oficial: <a href="https://www.ibge.gov.br/estatisticas/economicas/precos-e-custos/9256-indice-nacional-de-precos-ao-consumidor-amplo.html" target="_blank" rel="noopener noreferrer" className="text-brand-600 hover:underline">IBGE — IPCA/INPC</a>
           </p>

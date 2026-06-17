@@ -1,7 +1,34 @@
 // Extrator DOCX para CCTs — Motor CCT v1.5
 // Trata <w:br/> como separador de linha E divide parágrafos grandes que contêm múltiplas cláusulas
 
+// Detecta o formato do arquivo pelos bytes mágicos do cabeçalho
+async function detectarFormato(file) {
+  const bytes = new Uint8Array(await file.slice(0, 8).arrayBuffer())
+  // DOCX/ZIP: começa com "PK" (0x50 0x4B)
+  if (bytes[0] === 0x50 && bytes[1] === 0x4B) return 'docx'
+  // DOC antigo (OLE2 Compound): começa com D0 CF 11 E0
+  if (bytes[0] === 0xD0 && bytes[1] === 0xCF && bytes[2] === 0x11 && bytes[3] === 0xE0) return 'doc_legado'
+  return 'desconhecido'
+}
+
 export async function extractDOCXText(file) {
+  // Verifica formato antes de tentar o JSZip para evitar erro confuso
+  const formato = await detectarFormato(file)
+
+  if (formato === 'doc_legado') {
+    throw new Error(
+      'Formato .doc (Word 97-2003) não suportado.\n\n' +
+      'Solução: abra o arquivo no Word → Arquivo → Salvar Como → selecione "Documento Word (.docx)" → salve → faça upload do novo arquivo.\n\n' +
+      'Alternativa: converta em https://cloudconvert.com/doc-to-docx'
+    )
+  }
+
+  if (formato === 'desconhecido' && file.name?.toLowerCase().endsWith('.doc')) {
+    throw new Error(
+      'Arquivo .doc não reconhecido. Por favor converta para .docx e tente novamente.'
+    )
+  }
+
   try {
     return await extractViaZip(file)
   } catch (e) {

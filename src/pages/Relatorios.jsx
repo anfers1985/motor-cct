@@ -5,103 +5,8 @@ import { vigenciaStatus } from '../utils/formatters'
 import { CATEGORIAS } from '../utils/categorias'
 import { gerarExcelMultiplo, gerarExcelInstrumento } from '../services/reports/excelReport'
 import { gerarPDFInstrumento } from '../services/reports/pdfReport'
-
-// ── CheckList com busca por nome/CNPJ ────────────────────────────────────────
-function CheckList({ opcoes, selecionados, onChange, busca, onBusca }) {
-  const q = busca.toLowerCase()
-  const cnpjQ = busca.replace(/\D/g, '')
-  const filtrados = busca
-    ? opcoes.filter(o =>
-        o.label.toLowerCase().includes(q) ||
-        (cnpjQ.length >= 3 && (o.cnpj || '').replace(/\D/g, '').includes(cnpjQ))
-      )
-    : opcoes
-
-  return (
-    <div>
-      <input className="input text-sm mb-2" placeholder="Buscar por nome ou CNPJ..."
-        value={busca} onChange={e => onBusca(e.target.value)}/>
-      <div className="border border-slate-200 rounded-lg overflow-y-auto" style={{ maxHeight: 168 }}>
-        {filtrados.length === 0 && (
-          <p className="text-xs text-slate-400 p-3 italic">Nenhuma opção disponível</p>
-        )}
-        {filtrados.map(o => (
-          <label key={o.value}
-            className="flex items-start gap-3 px-3 py-2.5 hover:bg-surface-50 cursor-pointer border-b border-slate-100 last:border-0">
-            <input type="checkbox" className="mt-0.5 accent-blue-600 flex-shrink-0"
-              checked={selecionados.includes(o.value)}
-              onChange={e => e.target.checked
-                ? onChange([...selecionados, o.value])
-                : onChange(selecionados.filter(id => id !== o.value))}/>
-            <div className="min-w-0">
-              <p className="text-sm text-slate-700 leading-tight">{o.label}</p>
-              {o.cnpj && <p className="text-xs text-slate-400 mt-0.5">{o.cnpj}</p>}
-            </div>
-          </label>
-        ))}
-      </div>
-      <div className="flex items-center gap-2 mt-1.5 text-xs text-slate-400">
-        <button className="hover:text-slate-600 transition-colors"
-          onClick={() => onChange(filtrados.map(o => o.value))}>Selecionar todos</button>
-        <span>·</span>
-        <button className="hover:text-slate-600 transition-colors"
-          onClick={() => onChange([])}>Limpar</button>
-        <span className="ml-auto font-medium text-slate-500">
-          {selecionados.length === 0
-            ? 'Todos (' + opcoes.length + ')'
-            : selecionados.length + ' selecionado(s)'}
-        </span>
-      </div>
-    </div>
-  )
-}
-
-// ── Card de passo do stepper ──────────────────────────────────────────────────
-function StepCard({ number, title, subtitle, active, done, locked, summary, onEdit, children, onConfirm, onSkip }) {
-  return (
-    <div className={'card mb-3 overflow-hidden transition-all ' + (locked ? 'opacity-40 pointer-events-none' : '')}>
-      <div className="p-4">
-        <div className="flex items-center gap-3">
-          <div className={'w-7 h-7 rounded-full flex items-center justify-center text-sm font-medium flex-shrink-0 transition-colors ' +
-            (done && !active ? 'bg-emerald-500 text-white'
-              : active ? 'bg-brand-600 text-white'
-              : 'bg-slate-100 text-slate-400')}>
-            {done && !active ? '✓' : number}
-          </div>
-          <div className="flex-1 min-w-0">
-            <p className={'font-medium text-sm ' + (active ? 'text-slate-800' : done ? 'text-slate-700' : 'text-slate-500')}>
-              {title}
-            </p>
-            {active && subtitle && <p className="text-xs text-slate-400 mt-0.5">{subtitle}</p>}
-            {done && !active && summary && <p className="text-xs text-slate-400 truncate mt-0.5">{summary}</p>}
-          </div>
-          {done && !active && (
-            <button onClick={onEdit}
-              className="text-xs text-brand-600 hover:text-brand-700 flex-shrink-0 transition-colors">
-              Editar
-            </button>
-          )}
-        </div>
-
-        {active && (
-          <div className="mt-4 pt-3 border-t border-slate-100">
-            {children}
-            <div className="flex gap-2 mt-4">
-              <button className="btn-primary text-sm py-1.5 px-4" onClick={onConfirm}>
-                Confirmar →
-              </button>
-              {onSkip && (
-                <button className="btn-secondary text-xs py-1.5" onClick={onSkip}>
-                  Incluir todos e avançar
-                </button>
-              )}
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
-  )
-}
+import CheckList from '../components/UI/CheckList'
+import StepCard from '../components/UI/StepCard'
 
 // ── Relatórios ────────────────────────────────────────────────────────────────
 export default function Relatorios() {
@@ -346,9 +251,20 @@ export default function Relatorios() {
 
   return (
     <div>
-      <div className="mb-6">
-        <h1 className="font-display font-bold text-2xl text-slate-800">Relatórios</h1>
-        <p className="text-slate-500 text-sm">Selecione os filtros em 4 passos e gere relatórios em Excel ou PDF</p>
+      <div className="mb-6 flex items-start justify-between gap-4">
+        <div>
+          <h1 className="font-display font-bold text-2xl text-slate-800">Relatórios</h1>
+          <p className="text-slate-500 text-sm">Selecione os filtros em 4 passos e gere relatórios em Excel ou PDF</p>
+        </div>
+        {confirmados.size > 0 && (
+          <button onClick={() => {
+            setSels({ empresas:[],operacoes:[],sindicatosLab:[],sindicatosPat:[],instrumentos:[],vigencia:'',categorias:[],subcategorias:[] })
+            setConfirmados(new Set()); setStepAtivo(1)
+            setBuscas({ emp:'',op:'',sindLab:'',sindPat:'',inst:'' }); setPreview(null)
+          }} className="btn-secondary text-xs py-1.5 flex-shrink-0 mt-1">
+            ↺ Recomeçar
+          </button>
+        )}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
