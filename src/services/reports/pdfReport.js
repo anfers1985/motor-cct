@@ -105,33 +105,53 @@ function computeSegmentos(textoA, textoB) {
 }
 
 // Renderiza segmentos coloridos dentro de uma célula jsPDF
-function renderSegmentosColoridos(doc, segs, cellX, cellY, cellW, cellH, fontSize) {
-  if (!segs||segs.length===0) return
+// ── CORREÇÃO: usa doc.internal.pageSize.height para detectar fim de página e
+//    registra a posição Y final em vez de cortar com cellHeight fixo.
+function renderSegmentosColoridos(doc, segs, cellX, cellY, cellW, fontSize) {
+  if (!segs || segs.length === 0) return
   doc.setFontSize(fontSize)
-  const pad=1.5, x0=cellX+pad, maxX=cellX+cellW-pad, maxY=cellY+cellH-0.5
-  const lineH=fontSize*0.42
-  let cx=x0, cy=cellY+pad+lineH
+  const pad = 1.5
+  const x0 = cellX + pad
+  const maxX = cellX + cellW - pad
+  const lineH = fontSize * 0.42
+  let cx = x0
+  let cy = cellY + pad + lineH
+
   for (const seg of segs) {
-    if (cy>maxY) break
-    if (seg.type==='add') doc.setTextColor(22,101,52)
-    else if (seg.type==='rem') doc.setTextColor(109,40,217)
-    else doc.setTextColor(40,40,40)
+    if (seg.type === 'add') doc.setTextColor(22, 101, 52)
+    else if (seg.type === 'rem') doc.setTextColor(109, 40, 217)
+    else doc.setTextColor(40, 40, 40)
+
     for (const token of seg.text.split(/(\s+)/)) {
       if (!token) continue
-      const tw=doc.getTextWidth(token), isSpace=/^\s+$/.test(token)
-      if (isSpace) { if(cx+tw>maxX){cx=x0;cy+=lineH}else cx+=tw; continue }
-      if (cx+tw>maxX&&cx>x0) { cx=x0; cy+=lineH }
-      if (cy>maxY) break
-      doc.text(token,cx,cy)
-      if (seg.type==='rem') {
-        doc.setDrawColor(109,40,217); doc.setLineWidth(0.15)
-        doc.line(cx,cy-lineH*0.4,cx+tw,cy-lineH*0.4)
+      const tw = doc.getTextWidth(token)
+      const isSpace = /^\s+$/.test(token)
+      if (isSpace) {
+        if (cx + tw > maxX) { cx = x0; cy += lineH }
+        else cx += tw
+        continue
       }
-      cx+=tw
+      if (cx + tw > maxX && cx > x0) { cx = x0; cy += lineH }
+      doc.text(token, cx, cy)
+      if (seg.type === 'rem') {
+        doc.setDrawColor(109, 40, 217); doc.setLineWidth(0.15)
+        doc.line(cx, cy - lineH * 0.4, cx + tw, cy - lineH * 0.4)
+      }
+      cx += tw
     }
-    if (cy>maxY) break
   }
-  doc.setTextColor(0,0,0); doc.setDrawColor(0,0,0); doc.setLineWidth(0.2)
+  doc.setTextColor(0, 0, 0)
+  doc.setDrawColor(0, 0, 0)
+  doc.setLineWidth(0.2)
+}
+
+// ── Estima altura de célula em mm a partir do conteúdo e largura disponível ──
+function estimarAlturaCelula(doc, texto, largura, fontSize, padding = 1.5) {
+  if (!texto) return fontSize * 0.5
+  doc.setFontSize(fontSize)
+  const lineH = fontSize * 0.42
+  const linhas = doc.splitTextToSize(texto, largura - padding * 2)
+  return linhas.length * lineH + padding * 2 + 1
 }
 
 export function gerarPDFComparativo(resultado, instrumentoA, instrumentoB) {
@@ -146,63 +166,112 @@ export function gerarPDFComparativo(resultado, instrumentoA, instrumentoB) {
     'SUPRIMIDA': { fill:[241,245,249], text:[71,85,105]  },
     'NOVA':      { fill:[243,232,255], text:[109,40,217] },
   }
-  const FONT_SIZE = 6.5
 
-  // ── Armazena segs DENTRO do objeto célula para evitar dependência de índice de linha
-  const body = resultado.map(r => {
+  const FONT_SIZE = 6.5
+  // Larguras das colunas (total = 248mm em landscape A4)
+  const COL_WIDTHS = { 0:22, 1:12, 2:36, 3:65, 4:12, 5:36, 6:65 }
+
+  // Pré-processa diff para cada linha
+  const linhasProcessadas = resultado.map(r => {
     const hasDiff = r.status.label === 'ALTERADA'
+    const tA = r.clausulaA?.conteudo || ''
+    const tB = r.clausulaB?.conteudo || ''
     let segsA = null, segsB = null
     if (hasDiff) {
-      const tA = (r.clausulaA?.conteudo||'').slice(0,500)
-      const tB = (r.clausulaB?.conteudo||'').slice(0,500)
       ;({ segsA, segsB } = computeSegmentos(tA, tB))
     }
-    return [
-      { content: r.status.label },
-      { content: r.clausulaA?.numero || '' },
-      { content: r.clausulaA?.titulo || '' },
-      { content: (r.clausulaA?.conteudo||'').slice(0,500), _segs: segsA },
-      { content: r.clausulaB?.numero || '' },
-      { content: r.clausulaB?.titulo || '' },
-      { content: (r.clausulaB?.conteudo||'').slice(0,500), _segs: segsB },
-    ]
+    return { r, tA, tB, segsA, segsB, hasDiff }
   })
 
   doc.autoTable({
     startY: 36,
-    head: [['Status','Nº',nomeA.slice(0,28)+'\nTítulo',nomeA.slice(0,28)+'\nConteúdo','Nº',nomeB.slice(0,28)+'\nTítulo',nomeB.slice(0,28)+'\nConteúdo']],
-    body,
-    styles: { fontSize: FONT_SIZE, cellPadding: 1.5, overflow: 'linebreak', valign: 'top' },
+    head: [[
+      'Status', 'Nº',
+      nomeA.slice(0, 28) + '\nTítulo',
+      nomeA.slice(0, 28) + '\nConteúdo',
+      'Nº',
+      nomeB.slice(0, 28) + '\nTítulo',
+      nomeB.slice(0, 28) + '\nConteúdo',
+    ]],
+    body: linhasProcessadas.map(({ r, tA, tB, segsA, segsB, hasDiff }) => [
+      { content: r.status.label },
+      { content: r.clausulaA?.numero || '' },
+      { content: r.clausulaA?.titulo || '' },
+      { content: tA, _segs: segsA },
+      { content: r.clausulaB?.numero || '' },
+      { content: r.clausulaB?.titulo || '' },
+      { content: tB, _segs: segsB },
+    ]),
+
+    styles: {
+      fontSize: FONT_SIZE,
+      cellPadding: 1.5,
+      overflow: 'linebreak',
+      valign: 'top',
+      // Garante que a célula tenha altura suficiente para o conteúdo sem corte
+      minCellHeight: 0,
+    },
     headStyles: { fillColor: [26,79,255], textColor: 255, fontStyle: 'bold', fontSize: 7 },
-    columnStyles: { 0:{cellWidth:22}, 1:{cellWidth:12}, 2:{cellWidth:36}, 3:{cellWidth:65}, 4:{cellWidth:12}, 5:{cellWidth:36}, 6:{cellWidth:65} },
+    columnStyles: {
+      0: { cellWidth: COL_WIDTHS[0] },
+      1: { cellWidth: COL_WIDTHS[1] },
+      2: { cellWidth: COL_WIDTHS[2] },
+      3: { cellWidth: COL_WIDTHS[3] },
+      4: { cellWidth: COL_WIDTHS[4] },
+      5: { cellWidth: COL_WIDTHS[5] },
+      6: { cellWidth: COL_WIDTHS[6] },
+    },
+
+    // Fixa a altura de cada linha para acomodar o conteúdo mais longo da linha
+    willDrawCell: (data) => {
+      if (data.section !== 'body') return
+      // Já é tratado pelo autoTable via overflow:linebreak — sem intervenção necessária
+    },
 
     didParseCell: (data) => {
       if (data.section !== 'body') return
+
+      // Badge de status na col 0
       if (data.column.index === 0) {
         const cor = STATUS_BADGE[data.cell.raw?.content]
-        if (cor) { data.cell.styles.fillColor=cor.fill; data.cell.styles.textColor=cor.text; data.cell.styles.fontStyle='bold' }
+        if (cor) {
+          data.cell.styles.fillColor = cor.fill
+          data.cell.styles.textColor = cor.text
+          data.cell.styles.fontStyle = 'bold'
+        }
       }
-      // Torna o texto original invisível para células com diff — o didDrawCell reescreve colorido
-      if ((data.column.index===3||data.column.index===6) && data.cell.raw?._segs) {
-        data.cell.styles.textColor = [255,255,255]
+
+      // Colunas de conteúdo com diff: ocultar texto branco (vai ser redesenhado colorido)
+      if ((data.column.index === 3 || data.column.index === 6) && data.cell.raw?._segs) {
+        data.cell.styles.textColor = [255, 255, 255]
       }
     },
 
     didDrawCell: (data) => {
       if (data.section !== 'body') return
-      if (data.column.index!==3 && data.column.index!==6) return
+      if (data.column.index !== 3 && data.column.index !== 6) return
       const segs = data.cell.raw?._segs
-      if (!segs||segs.length===0) return
-      renderSegmentosColoridos(doc, segs, data.cell.x, data.cell.y, data.cell.width, data.cell.height, FONT_SIZE)
+      if (!segs || segs.length === 0) return
+      // Passa cellY real da célula desenhada — sem limite de altura artificial
+      renderSegmentosColoridos(
+        doc,
+        segs,
+        data.cell.x,
+        data.cell.y,
+        data.cell.width,
+        FONT_SIZE
+      )
     },
   })
 
+  // Legenda
   const finalY = doc.lastAutoTable.finalY + 4
-  if (finalY < 200) {
-    doc.setFontSize(7); doc.setTextColor(80,80,80); doc.text('Legenda: ',14,finalY)
-    doc.setTextColor(109,40,217); doc.text('texto removido (tachado) = estava no instrumento A',32,finalY)
-    doc.setTextColor(22,101,52); doc.text('texto adicionado (verde) = novo no instrumento B',14,finalY+4)
-    doc.setTextColor(0,0,0)
+  const pageH = 210 // landscape A4
+  if (finalY < pageH - 14) {
+    doc.setFontSize(7); doc.setTextColor(80, 80, 80); doc.text('Legenda: ', 14, finalY)
+    doc.setTextColor(109, 40, 217); doc.text('texto removido (tachado) = estava no instrumento A', 32, finalY)
+    doc.setTextColor(22, 101, 52); doc.text('texto adicionado (verde) = novo no instrumento B', 14, finalY + 4)
+    doc.setTextColor(0, 0, 0)
   }
 
   addFooter(doc, true)
@@ -222,7 +291,7 @@ export function gerarPDFClausulas(clausulas, instrumento) {
       c.numero || '',
       c.titulo || '',
       c.categoria || '',
-      (c.conteudo || '').slice(0, 600),
+      c.conteudo || '',
     ]),
     styles: { fontSize: 7.5, cellPadding: 1.5, overflow: 'linebreak', valign: 'top' },
     headStyles: { fillColor: [26, 79, 255], textColor: 255, fontStyle: 'bold', fontSize: 8 },

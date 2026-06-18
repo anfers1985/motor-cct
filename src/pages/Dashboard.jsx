@@ -9,14 +9,13 @@ import * as XLSX from 'xlsx'
 import jsPDF from 'jspdf'
 import 'jspdf-autotable'
 
-function StatCard({ icon, label, value, sub, color = 'brand' }) {
+function StatCard({ icon, label, value, color = 'brand' }) {
   return (
     <div className="card p-5">
       <div className="flex items-start justify-between">
         <div>
           <p className="text-xs font-medium text-slate-500 mb-1">{label}</p>
           <p className={`text-3xl font-display font-bold text-${color}-600`}>{value ?? '—'}</p>
-          {sub && <p className="text-xs text-slate-400 mt-1">{sub}</p>}
         </div>
         <span className="text-2xl">{icon}</span>
       </div>
@@ -24,12 +23,23 @@ function StatCard({ icon, label, value, sub, color = 'brand' }) {
   )
 }
 
+function fmt(v) { return v == null ? '—' : v.toFixed(2).replace('.', ',') + '%' }
+
+// Converte série de variações mensais em acumulado progressivo
+// Ex: [0.26, -0.11, 0.48] → [0.26, 0.15, 0.63] (acumulado composto até cada mês)
+function serieAcumulada(valores) {
+  let fator = 1
+  return valores.map(v => {
+    if (v == null) return null
+    fator *= (1 + v / 100)
+    return parseFloat(((fator - 1) * 100).toFixed(4))
+  })
+}
+
 function acumuladoLabel(valores) {
   const v = acumulado(valores)
   return v == null ? '—' : v.toFixed(2).replace('.', ',') + '%'
 }
-
-function fmt(v) { return v == null ? '—' : v.toFixed(2).replace('.', ',') + '%' }
 
 export default function Dashboard() {
   const { user } = useAuth()
@@ -41,6 +51,16 @@ export default function Dashboard() {
   const [chartLoading, setChartLoading] = useState(true)
   const [apiIndisponivel, setApiIndisponivel] = useState(false)
   const [mostrarTabela, setMostrarTabela] = useState(false)
+  // Controle de visibilidade de cada série no gráfico
+  const [seriesVisiveis, setSeriesVisiveis] = useState(new Set(['IPCA acum.', 'INPC acum.', 'Reajuste médio (CCTs)']))
+
+  function toggleSerie(name) {
+    setSeriesVisiveis(prev => {
+      const s = new Set(prev)
+      if (s.has(name)) { s.delete(name) } else { s.add(name) }
+      return s
+    })
+  }
 
   useEffect(() => {
     if (!user) return
@@ -94,17 +114,26 @@ export default function Dashboard() {
         if (!porMes[key]) porMes[key] = []
         porMes[key].push(pct)
       }
-      const reajusteMedio = meses.map(m => {
+      const reajusteMensal = meses.map(m => {
         const vals = porMes[m.key]
         if (!vals?.length) return null
         return vals.reduce((a, b) => a + b, 0) / vals.length
       })
+
+      const ipcaMensal  = indices.map(i => i.ipca)
+      const inpcMensal  = indices.map(i => i.inpc)
+
       setChartData({
         labels: indices.map(i => i.label),
         keys: meses.map(m => m.key),
-        ipca: indices.map(i => i.ipca),
-        inpc: indices.map(i => i.inpc),
-        reajuste: reajusteMedio,
+        // Séries mensais (para tabela)
+        ipcaMensal,
+        inpcMensal,
+        reajusteMensal,
+        // Séries acumuladas (para gráfico)
+        ipcaAcum:    serieAcumulada(ipcaMensal),
+        inpcAcum:    serieAcumulada(inpcMensal),
+        reajusteAcum: serieAcumulada(reajusteMensal),
       })
       setChartLoading(false)
     }
@@ -116,14 +145,25 @@ export default function Dashboard() {
     const wb = XLSX.utils.book_new()
     const rows = chartData.labels.map((l, i) => ({
       'Mês': l,
-      'IPCA (% mensal)': chartData.ipca[i] ?? '',
-      'INPC (% mensal)': chartData.inpc[i] ?? '',
-      'Reajuste médio CCTs (%)': chartData.reajuste[i] ?? '',
+      'IPCA mensal (%)': chartData.ipcaMensal[i] ?? '',
+      'INPC mensal (%)': chartData.inpcMensal[i] ?? '',
+      'Reajuste médio mensal (%)': chartData.reajusteMensal[i] ?? '',
+      'IPCA acumulado (%)': chartData.ipcaAcum[i] ?? '',
+      'INPC acumulado (%)': chartData.inpcAcum[i] ?? '',
+      'Reajuste médio acumulado (%)': chartData.reajusteAcum[i] ?? '',
     }))
     rows.push({})
-    rows.push({ 'Mês': 'ACUMULADO 12m', 'IPCA (% mensal)': acumulado(chartData.ipca)?.toFixed(2) ?? '', 'INPC (% mensal)': acumulado(chartData.inpc)?.toFixed(2) ?? '', 'Reajuste médio CCTs (%)': '' })
+    rows.push({
+      'Mês': 'ACUMULADO 12m',
+      'IPCA mensal (%)': '',
+      'INPC mensal (%)': '',
+      'Reajuste médio mensal (%)': '',
+      'IPCA acumulado (%)': acumulado(chartData.ipcaMensal)?.toFixed(4) ?? '',
+      'INPC acumulado (%)': acumulado(chartData.inpcMensal)?.toFixed(4) ?? '',
+      'Reajuste médio acumulado (%)': acumulado(chartData.reajusteMensal)?.toFixed(4) ?? '',
+    })
     const ws = XLSX.utils.json_to_sheet(rows)
-    ws['!cols'] = [{ wch: 14 }, { wch: 18 }, { wch: 18 }, { wch: 24 }]
+    ws['!cols'] = [{ wch: 14 }, { wch: 20 }, { wch: 20 }, { wch: 28 }, { wch: 22 }, { wch: 22 }, { wch: 30 }]
     XLSX.utils.book_append_sheet(wb, ws, 'Índices')
     XLSX.writeFile(wb, 'indices_economicos.xlsx')
   }
@@ -131,25 +171,31 @@ export default function Dashboard() {
   function exportarPDF() {
     if (!chartData) return
     const doc = new jsPDF()
-    doc.setFontSize(14); doc.text('Índices Econômicos vs Reajuste — Motor CCT', 14, 18)
+    doc.setFontSize(14); doc.text('Índices Econômicos — Motor CCT', 14, 18)
     doc.setFontSize(9); doc.setTextColor(120)
-    doc.text(`IPCA acumulado 12m: ${acumuladoLabel(chartData.ipca)}   INPC acumulado 12m: ${acumuladoLabel(chartData.inpc)}`, 14, 26)
+    doc.text(
+      `IPCA acumulado 12m: ${acumuladoLabel(chartData.ipcaMensal)}   INPC acumulado 12m: ${acumuladoLabel(chartData.inpcMensal)}`,
+      14, 26
+    )
     doc.setTextColor(0)
     doc.autoTable({
       startY: 32,
-      head: [['Mês', 'IPCA (%)', 'INPC (%)', 'Reajuste Médio (%)']],
+      head: [['Mês', 'IPCA mensal', 'INPC mensal', 'Reajuste', 'IPCA acum.', 'INPC acum.', 'Reajuste acum.']],
       body: chartData.labels.map((l, i) => [
         l,
-        fmt(chartData.ipca[i]),
-        fmt(chartData.inpc[i]),
-        fmt(chartData.reajuste[i]),
+        fmt(chartData.ipcaMensal[i]),
+        fmt(chartData.inpcMensal[i]),
+        fmt(chartData.reajusteMensal[i]),
+        fmt(chartData.ipcaAcum[i]),
+        fmt(chartData.inpcAcum[i]),
+        fmt(chartData.reajusteAcum[i]),
       ]),
-      styles: { fontSize: 9 },
+      styles: { fontSize: 8 },
       headStyles: { fillColor: [26, 79, 255] },
     })
     const finalY = doc.lastAutoTable.finalY + 8
-    doc.setFontSize(8); doc.setTextColor(120)
-    doc.text('Fonte IPCA/INPC: Banco Central do Brasil (séries 433 e 188). Reajuste: cláusulas de reajuste salarial dos instrumentos cadastrados.', 14, finalY, { maxWidth: 180 })
+    doc.setFontSize(7); doc.setTextColor(120)
+    doc.text('Fonte: Banco Central do Brasil (séries 433 e 188). Reajuste: cláusulas dos instrumentos cadastrados.', 14, finalY, { maxWidth: 180 })
     doc.save('indices_economicos.pdf')
   }
 
@@ -234,25 +280,29 @@ export default function Dashboard() {
             </div>
           </div>
 
-          {/* Gráfico: IPCA, INPC vs Reajuste médio — abaixo dos alertas */}
+          {/* ── Gráfico acumulado ── */}
           <div className="card p-5">
             <div className="flex items-start justify-between mb-3 flex-wrap gap-2">
               <div>
-                <h2 className="font-display font-semibold text-slate-700">📈 Evolução de Índices vs Reajuste Médio</h2>
+                <h2 className="font-display font-semibold text-slate-700">📈 Evolução Acumulada — IPCA / INPC vs Reajuste</h2>
                 <p className="text-xs text-slate-400 mt-0.5">
-                  IPCA e INPC (variação mensal %) comparados ao reajuste salarial médio dos instrumentos cadastrados — últimos 12 meses
+                  Variação acumulada progressiva (%) — últimos 12 meses. Clique nas séries da legenda para mostrar/ocultar.
                 </p>
               </div>
               {!chartLoading && chartData && (
                 <div className="flex items-center gap-3 flex-wrap">
                   <span className="text-xs text-slate-500">
-                    IPCA 12m: <span className="font-semibold text-blue-600">{acumuladoLabel(chartData.ipca)}</span>
+                    IPCA 12m: <span className="font-semibold text-blue-600">{acumuladoLabel(chartData.ipcaMensal)}</span>
                   </span>
                   <span className="text-xs text-slate-500">
-                    INPC 12m: <span className="font-semibold text-purple-600">{acumuladoLabel(chartData.inpc)}</span>
+                    INPC 12m: <span className="font-semibold text-purple-600">{acumuladoLabel(chartData.inpcMensal)}</span>
                   </span>
-                  <button onClick={() => setMostrarTabela(v => !v)}
-                    className="btn-secondary text-xs py-1">
+                  {acumulado(chartData.reajusteMensal) != null && (
+                    <span className="text-xs text-slate-500">
+                      Reajuste médio: <span className="font-semibold text-emerald-600">{acumuladoLabel(chartData.reajusteMensal)}</span>
+                    </span>
+                  )}
+                  <button onClick={() => setMostrarTabela(v => !v)} className="btn-secondary text-xs py-1">
                     {mostrarTabela ? '📊 Ocultar dados' : '📋 Ver dados'}
                   </button>
                   <button onClick={exportarExcel} className="btn-secondary text-xs py-1">📥 Excel</button>
@@ -274,44 +324,54 @@ export default function Dashboard() {
                 <LineChart
                   labels={chartData.labels}
                   series={[
-                    { name: 'IPCA', color: '#2563eb', data: chartData.ipca },
-                    { name: 'INPC', color: '#9333ea', data: chartData.inpc },
-                    { name: 'Reajuste médio (CCTs)', color: '#16a34a', data: chartData.reajuste },
+                    { name: 'IPCA acum.',            color: '#2563eb', data: chartData.ipcaAcum    },
+                    { name: 'INPC acum.',            color: '#9333ea', data: chartData.inpcAcum    },
+                    { name: 'Reajuste médio (CCTs)', color: '#16a34a', data: chartData.reajusteAcum },
                   ]}
+                  seriesVisiveis={seriesVisiveis}
+                  onToggleSerie={toggleSerie}
+                  formatValue={v => v?.toFixed(2).replace('.', ',') + '%'}
                 />
 
-                {chartData.reajuste.every(v => v == null) && (
+                {chartData.reajusteAcum.every(v => v == null) && (
                   <p className="text-xs text-slate-400 text-center mt-2">
-                    Nenhuma cláusula de reajuste encontrada nos instrumentos cadastrados para os últimos 12 meses.
+                    Nenhuma cláusula de reajuste salarial encontrada nos instrumentos cadastrados para os últimos 12 meses.
                   </p>
                 )}
 
-                {/* Tabela de dados detalhados */}
+                {/* Tabela de dados */}
                 {mostrarTabela && (
                   <div className="mt-4 overflow-x-auto">
                     <table className="w-full text-xs">
                       <thead>
-                        <tr className="border-b border-slate-200 text-left text-slate-500">
-                          <th className="py-2 pr-4 font-medium">Mês</th>
-                          <th className="py-2 pr-4 font-medium text-blue-600">IPCA (%)</th>
-                          <th className="py-2 pr-4 font-medium text-purple-600">INPC (%)</th>
-                          <th className="py-2 font-medium text-emerald-600">Reajuste Médio (%)</th>
+                        <tr className="border-b border-slate-200 bg-slate-50">
+                          <th className="text-left py-2 px-3 text-slate-500 font-medium">Mês</th>
+                          <th className="text-right py-2 px-3 text-blue-600 font-medium">IPCA<br/><span className="font-normal opacity-70">mensal</span></th>
+                          <th className="text-right py-2 px-3 text-blue-700 font-medium">IPCA<br/><span className="font-normal opacity-70">acum.</span></th>
+                          <th className="text-right py-2 px-3 text-purple-600 font-medium">INPC<br/><span className="font-normal opacity-70">mensal</span></th>
+                          <th className="text-right py-2 px-3 text-purple-700 font-medium">INPC<br/><span className="font-normal opacity-70">acum.</span></th>
+                          <th className="text-right py-2 px-3 text-emerald-600 font-medium">Reajuste<br/><span className="font-normal opacity-70">médio acum.</span></th>
                         </tr>
                       </thead>
                       <tbody>
                         {chartData.labels.map((l, i) => (
                           <tr key={i} className="border-b border-slate-100 hover:bg-slate-50">
-                            <td className="py-1.5 pr-4 text-slate-600 capitalize">{l}</td>
-                            <td className="py-1.5 pr-4 text-blue-700 font-mono">{fmt(chartData.ipca[i])}</td>
-                            <td className="py-1.5 pr-4 text-purple-700 font-mono">{fmt(chartData.inpc[i])}</td>
-                            <td className="py-1.5 text-emerald-700 font-mono">{fmt(chartData.reajuste[i])}</td>
+                            <td className="py-1.5 px-3 capitalize text-slate-600">{l}</td>
+                            <td className="py-1.5 px-3 text-right text-blue-600 font-mono">{fmt(chartData.ipcaMensal[i])}</td>
+                            <td className="py-1.5 px-3 text-right text-blue-700 font-mono font-semibold">{fmt(chartData.ipcaAcum[i])}</td>
+                            <td className="py-1.5 px-3 text-right text-purple-600 font-mono">{fmt(chartData.inpcMensal[i])}</td>
+                            <td className="py-1.5 px-3 text-right text-purple-700 font-mono font-semibold">{fmt(chartData.inpcAcum[i])}</td>
+                            <td className="py-1.5 px-3 text-right text-emerald-700 font-mono font-semibold">{fmt(chartData.reajusteAcum[i])}</td>
                           </tr>
                         ))}
-                        <tr className="bg-slate-50 font-semibold">
-                          <td className="py-2 pr-4 text-slate-700">Acumulado 12m</td>
-                          <td className="py-2 pr-4 text-blue-700 font-mono">{acumuladoLabel(chartData.ipca)}</td>
-                          <td className="py-2 pr-4 text-purple-700 font-mono">{acumuladoLabel(chartData.inpc)}</td>
-                          <td className="py-2 text-slate-400 text-xs italic">—</td>
+                        {/* Linha de totais */}
+                        <tr className="bg-slate-50 border-t-2 border-slate-300">
+                          <td className="py-2 px-3 font-bold text-slate-700">Acumulado 12m</td>
+                          <td className="py-2 px-3 text-right text-blue-600 font-mono font-bold">{acumuladoLabel(chartData.ipcaMensal)}</td>
+                          <td className="py-2 px-3 text-right text-blue-700 font-mono font-bold">—</td>
+                          <td className="py-2 px-3 text-right text-purple-600 font-mono font-bold">{acumuladoLabel(chartData.inpcMensal)}</td>
+                          <td className="py-2 px-3 text-right text-purple-700 font-mono font-bold">—</td>
+                          <td className="py-2 px-3 text-right text-emerald-700 font-mono font-bold">{acumuladoLabel(chartData.reajusteMensal)}</td>
                         </tr>
                       </tbody>
                     </table>
