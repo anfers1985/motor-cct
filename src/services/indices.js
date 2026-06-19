@@ -6,11 +6,14 @@ const BCB_INPC_CODE = 188 // INPC - variação mensal (%)
 const MANUAL_KEY = 'motor_cct_indices_manuais'
 
 // Retorna os últimos N meses no formato { ano, mes, label } — mes 1-12
+// Começa do mês ANTERIOR ao atual, pois o IBGE/BCB só divulga dados de M no mês M+1.
+// Ex: em junho/26, retorna jun/25 a mai/26 (12 meses com dados disponíveis).
 export function ultimosMeses(n = 12) {
   const out = []
   const hoje = new Date()
+  // offset = 1 desloca o início para o mês anterior
   for (let i = n - 1; i >= 0; i--) {
-    const d = new Date(hoje.getFullYear(), hoje.getMonth() - i, 1)
+    const d = new Date(hoje.getFullYear(), hoje.getMonth() - 1 - i, 1)
     out.push({
       ano: d.getFullYear(),
       mes: d.getMonth() + 1,
