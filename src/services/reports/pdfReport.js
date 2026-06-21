@@ -146,15 +146,14 @@ function renderSegmentosColoridos(doc, segs, cellX, cellY, cellW, cellH, fontSiz
   doc.setTextColor(0, 0, 0)
 }
 
-// Estima quantas páginas uma célula de conteúdo vai ocupar dado o fontSize e largura
-function estimarPaginas(doc, texto, largura, fontSize, pageH = 210, startY = 36, marginB = 8) {
-  if (!texto) return 1
-  doc.setFontSize(fontSize)
-  const lineH = fontSize * 0.42
-  const linhas = doc.splitTextToSize(texto, largura - 3)
-  const alturaTotal = linhas.length * lineH + 3
-  const alturaUtil = pageH - startY - marginB
-  return Math.ceil(alturaTotal / alturaUtil)
+// Threshold empírico: col 65mm, font 6.5 → ~50 chars/linha, ~60 linhas/página → ~3000 chars/página.
+// Abaixo do threshold: a cláusula cabe em 1 página → usa diff colorido.
+// Acima: quebra páginas → usa texto simples (autoTable trata a quebra corretamente).
+const CHARS_POR_PAGINA = 3000
+
+function cabeEmUmaPagina(textoA, textoB) {
+  return (textoA || '').length <= CHARS_POR_PAGINA &&
+         (textoB || '').length <= CHARS_POR_PAGINA
 }
 
 export function gerarPDFComparativo(resultado, instrumentoA, instrumentoB) {
@@ -182,14 +181,8 @@ export function gerarPDFComparativo(resultado, instrumentoA, instrumentoB) {
     const tB = r.clausulaB?.conteudo || ''
     let segsA = null, segsB = null
 
-    if (hasDiff) {
-      // Verifica se o conteúdo cabe em uma página (estimativa por tamanho de texto)
-      const paginasA = estimarPaginas(doc, tA, COL_WIDTHS[3], FONT_SIZE)
-      const paginasB = estimarPaginas(doc, tB, COL_WIDTHS[6], FONT_SIZE)
-      // Usa renderer colorido apenas se cabe em 1 página
-      if (paginasA <= 1 && paginasB <= 1) {
-        ;({ segsA, segsB } = computeSegmentos(tA, tB))
-      }
+    if (hasDiff && cabeEmUmaPagina(tA, tB)) {
+      ;({ segsA, segsB } = computeSegmentos(tA, tB))
     }
     return { r, tA, tB, segsA, segsB, hasDiff }
   })
