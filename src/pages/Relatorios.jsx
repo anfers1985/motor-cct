@@ -2,35 +2,29 @@ import { useState, useEffect } from 'react'
 import { supabase } from '../services/supabase'
 import { useAuth } from '../hooks/useAuth'
 import { vigenciaStatus } from '../utils/formatters'
-import { CATEGORIAS } from '../utils/categorias'
+import { CATEGORIAS, expandirSubcategorias } from '../utils/categorias'
 import { gerarExcelMultiplo, gerarExcelInstrumento } from '../services/reports/excelReport'
 import { gerarPDFInstrumento } from '../services/reports/pdfReport'
 import CheckList from '../components/UI/CheckList'
 import StepCard from '../components/UI/StepCard'
 
-// ── Relatórios ────────────────────────────────────────────────────────────────
 export default function Relatorios() {
   const { user } = useAuth()
   const [loading, setLoading] = useState(false)
   const [preview, setPreview] = useState(null)
 
-  // Dados brutos
   const [todasEmpresas,     setTodasEmpresas]     = useState([])
   const [todasOperacoes,    setTodasOperacoes]     = useState([])
   const [todosSindicatos,   setTodosSindicatos]    = useState([])
   const [todosInstrumentos, setTodosInstrumentos]  = useState([])
 
-  // Passo atual (1-4), passos confirmados
-  const [stepAtivo,       setStepAtivo]       = useState(1)
-  const [confirmados,     setConfirmados]     = useState(new Set())
+  const [confirmados, setConfirmados] = useState(new Set())
 
-  // Seleções de cada nível
   const [sels, setSels] = useState({
     empresas: [], operacoes: [], sindicatosLab: [], sindicatosPat: [],
     instrumentos: [], vigencia: '', categorias: [], subcategorias: [],
   })
 
-  // Buscas locais por nível
   const [buscas, setBuscas] = useState({ emp: '', op: '', sindLab: '', sindPat: '', inst: '' })
 
   useEffect(() => {
@@ -50,7 +44,11 @@ export default function Relatorios() {
     })
   }, [user])
 
-  // ── Mapas rápidos para labels ────────────────────────────────────────────
+  // Subcategorias canônicas para as categorias selecionadas (sem busca no banco)
+  const subcatsDisponiveis = sels.categorias.length > 0
+    ? [...new Set(sels.categorias.flatMap(c => CATEGORIAS[c] || []))]
+    : Object.values(CATEGORIAS).flat()
+
   const empMap  = Object.fromEntries(todasEmpresas.map(e => [e.id, e]))
   const opMap   = Object.fromEntries(todasOperacoes.map(o => [o.id, o]))
   const sindMap = Object.fromEntries(todosSindicatos.map(s => [s.id, s]))
@@ -59,7 +57,6 @@ export default function Relatorios() {
   const laboral  = todosSindicatos.filter(s => s.tipo === 'laboral')
   const patronal = todosSindicatos.filter(s => s.tipo === 'patronal')
 
-  // ── Cascade: opções filtradas por seleções anteriores ───────────────────
   const instsPorEmpresa = sels.empresas.length > 0
     ? todosInstrumentos.filter(i => sels.empresas.includes(i.empresa_id))
     : todosInstrumentos
@@ -86,11 +83,6 @@ export default function Relatorios() {
     cnpj: '',
   }))
 
-  const subcatsDisponiveis = sels.categorias.length > 0
-    ? [...new Set(sels.categorias.flatMap(cat => CATEGORIAS[cat] || []))]
-    : [...new Set(Object.values(CATEGORIAS).flat())]
-
-  // ── Confirmar / editar passos ────────────────────────────────────────────
   function confirmar(step, pularTodos = false) {
     if (pularTodos) {
       const clearMap = { 1: ['operacoes','sindicatosLab','sindicatosPat','instrumentos'], 2: ['sindicatosLab','sindicatosPat','instrumentos'], 3: ['instrumentos'] }
@@ -103,7 +95,6 @@ export default function Relatorios() {
     }
     const novos = new Set(confirmados)
     novos.add(step)
-    // limpa confirmações downstream
     for (let s = step + 1; s <= 4; s++) novos.delete(s)
     setConfirmados(novos)
     setStepAtivo(step + 1)
@@ -115,14 +106,12 @@ export default function Relatorios() {
     const novos = new Set(confirmados)
     for (let s = step; s <= 4; s++) novos.delete(s)
     setConfirmados(novos)
-    // limpa seleções downstream ao editar
     if (step <= 1) setSels(prev => ({ ...prev, operacoes: [], sindicatosLab: [], sindicatosPat: [], instrumentos: [] }))
     else if (step === 2) setSels(prev => ({ ...prev, sindicatosLab: [], sindicatosPat: [], instrumentos: [] }))
     else if (step === 3) setSels(prev => ({ ...prev, instrumentos: [] }))
     setPreview(null)
   }
 
-  // ── Resumo de cada passo (colapsado) ────────────────────────────────────
   function resumo(step) {
     const { empresas, operacoes, sindicatosLab, sindicatosPat, instrumentos } = sels
     const label2 = (arr, map, fn) => {
@@ -131,12 +120,8 @@ export default function Relatorios() {
       return nomes.join(' · ') + (arr.length > 2 ? ` +${arr.length - 2}` : '')
     }
     switch (step) {
-      case 1: return empresas.length === 0
-        ? 'Todas as empresas incluídas'
-        : label2(empresas, empMap, e => e?.razao_social)
-      case 2: return operacoes.length === 0
-        ? 'Todas as operações incluídas'
-        : label2(operacoes, opMap, o => o?.nome)
+      case 1: return empresas.length === 0 ? 'Todas as empresas incluídas' : label2(empresas, empMap, e => e?.razao_social)
+      case 2: return operacoes.length === 0 ? 'Todas as operações incluídas' : label2(operacoes, opMap, o => o?.nome)
       case 3: {
         const lab = sindicatosLab.length === 0 ? 'Todos os laborais' : label2(sindicatosLab, sindMap, s => s?.sigla || s?.razao_social)
         const pat = sindicatosPat.length === 0 ? 'Todos os patronais' : label2(sindicatosPat, sindMap, s => s?.sigla || s?.razao_social)
@@ -149,7 +134,6 @@ export default function Relatorios() {
     }
   }
 
-  // ── Filtrar para exportar ────────────────────────────────────────────────
   function filtrarParaExportar() {
     let arr = [...instsPorSind]
     if (sels.instrumentos.length > 0) arr = arr.filter(i => sels.instrumentos.includes(i.id))
@@ -176,8 +160,11 @@ export default function Relatorios() {
     if (!insts.length) { setPreview({ count: 0, n: 0 }); return }
     let total = 0
     for (const inst of insts) {
-      const { count } = await supabase.from('clausulas').select('*', { count: 'exact', head: true })
+      let q = supabase.from('clausulas').select('*', { count: 'exact', head: true })
         .eq('instrumento_id', inst.id).eq('user_id', user.id)
+      if (sels.categorias.length > 0)    q = q.in('categoria', sels.categorias)
+      if (sels.subcategorias.length > 0) q = q.in('subcategoria', expandirSubcategorias(sels.subcategorias))
+      const { count } = await q
       total += count || 0
     }
     setPreview({ count: total, n: insts.length })
@@ -190,7 +177,7 @@ export default function Relatorios() {
     for (const inst of insts) {
       let q = supabase.from('clausulas').select('*').eq('instrumento_id', inst.id).eq('user_id', user.id)
       if (sels.categorias.length > 0)    q = q.in('categoria', sels.categorias)
-      if (sels.subcategorias.length > 0) q = q.in('subcategoria', sels.subcategorias)
+      if (sels.subcategorias.length > 0) q = q.in('subcategoria', expandirSubcategorias(sels.subcategorias))
       const { data } = await q
       clausulas = clausulas.concat(data || [])
     }
@@ -201,7 +188,7 @@ export default function Relatorios() {
     setLoading(true)
     try {
       const { insts, clausulas } = await buscarDados()
-      if (!clausulas.length) { alert('Nenhuma cláusula encontrada.'); return }
+      if (!clausulas.length) { alert('Nenhuma cláusula encontrada com os filtros selecionados.'); return }
       if (insts.length === 1) {
         const inst = insts[0]
         const [{ data: emp },{ data: op },{ data: sLab },{ data: sPat }] = await Promise.all([
@@ -227,7 +214,7 @@ export default function Relatorios() {
     setLoading(true)
     try {
       const { insts, clausulas } = await buscarDados()
-      if (!clausulas.length) { alert('Nenhuma cláusula encontrada.'); return }
+      if (!clausulas.length) { alert('Nenhuma cláusula encontrada com os filtros selecionados.'); return }
       for (const inst of insts) {
         const clausulasInst = clausulas.filter(c => c.instrumento_id === inst.id)
         if (!clausulasInst.length) continue
@@ -246,7 +233,6 @@ export default function Relatorios() {
 
   const instsParaExportar = filtrarParaExportar()
   const tudo4Confirmado   = confirmados.has(1)
-
   const S = sels
 
   return (
@@ -268,93 +254,63 @@ export default function Relatorios() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-
-        {/* Coluna principal — Stepper */}
         <div className="lg:col-span-2">
           <div className="card p-4 mb-4">
             <h2 className="font-medium text-slate-700 text-sm mb-1">🔍 Filtros do Relatório</h2>
             <p className="text-xs text-slate-400">Complete os passos abaixo. Deixe sem seleção para incluir todos do nível e avançar.</p>
           </div>
 
-          {/* Passo 1 — Empresa */}
           <StepCard number="1" title="Empresa" subtitle="Busque por nome ou CNPJ"
             active={stepAtivo === 1} done={confirmados.has(1)} locked={false}
-            summary={resumo(1)}
-            onEdit={() => editar(1)}
-            onConfirm={() => confirmar(1)}
-            onSkip={() => confirmar(1, true)}>
+            summary={resumo(1)} onEdit={() => editar(1)} onConfirm={() => confirmar(1)} onSkip={() => confirmar(1, true)}>
             <CheckList
               opcoes={todasEmpresas.map(e => ({ value: e.id, label: e.razao_social, cnpj: e.cnpj || '' }))}
-              selecionados={S.empresas}
-              onChange={v => setSels(prev => ({ ...prev, empresas: v }))}
-              busca={buscas.emp}
-              onBusca={v => setBuscas(b => ({ ...b, emp: v }))}/>
+              selecionados={S.empresas} onChange={v => setSels(prev => ({ ...prev, empresas: v }))}
+              busca={buscas.emp} onBusca={v => setBuscas(b => ({ ...b, emp: v }))}/>
           </StepCard>
 
-          {/* Passo 2 — Operação */}
           <StepCard number="2" title="Operação"
             subtitle={opcoesOp.length + ' operação(ões) disponível(is) para a seleção acima'}
             active={stepAtivo === 2} done={confirmados.has(2)} locked={stepAtivo < 2 && !confirmados.has(1)}
-            summary={resumo(2)}
-            onEdit={() => editar(2)}
-            onConfirm={() => confirmar(2)}
-            onSkip={() => confirmar(2, true)}>
+            summary={resumo(2)} onEdit={() => editar(2)} onConfirm={() => confirmar(2)} onSkip={() => confirmar(2, true)}>
             <CheckList
               opcoes={opcoesOp.map(o => ({ value: o.id, label: o.nome + (o.codigo ? ' (' + o.codigo + ')' : ''), cnpj: '' }))}
-              selecionados={S.operacoes}
-              onChange={v => setSels(prev => ({ ...prev, operacoes: v }))}
-              busca={buscas.op}
-              onBusca={v => setBuscas(b => ({ ...b, op: v }))}/>
+              selecionados={S.operacoes} onChange={v => setSels(prev => ({ ...prev, operacoes: v }))}
+              busca={buscas.op} onBusca={v => setBuscas(b => ({ ...b, op: v }))}/>
           </StepCard>
 
-          {/* Passo 3 — Sindicatos */}
-          <StepCard number="3" title="Sindicatos"
-            subtitle="Laboral e patronal disponíveis para a seleção acima"
+          <StepCard number="3" title="Sindicatos" subtitle="Laboral e patronal disponíveis para a seleção acima"
             active={stepAtivo === 3} done={confirmados.has(3)} locked={stepAtivo < 3 && !confirmados.has(2)}
-            summary={resumo(3)}
-            onEdit={() => editar(3)}
-            onConfirm={() => confirmar(3)}
-            onSkip={() => confirmar(3, true)}>
+            summary={resumo(3)} onEdit={() => editar(3)} onConfirm={() => confirmar(3)} onSkip={() => confirmar(3, true)}>
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <p className="text-xs font-medium text-slate-600 mb-1.5">Sindicato Laboral</p>
                 <CheckList
                   opcoes={opcoesLab.map(s => ({ value: s.id, label: (s.sigla ? s.sigla + ' — ' : '') + s.razao_social, cnpj: s.cnpj || '' }))}
-                  selecionados={S.sindicatosLab}
-                  onChange={v => setSels(prev => ({ ...prev, sindicatosLab: v }))}
-                  busca={buscas.sindLab}
-                  onBusca={v => setBuscas(b => ({ ...b, sindLab: v }))}/>
+                  selecionados={S.sindicatosLab} onChange={v => setSels(prev => ({ ...prev, sindicatosLab: v }))}
+                  busca={buscas.sindLab} onBusca={v => setBuscas(b => ({ ...b, sindLab: v }))}/>
               </div>
               <div>
                 <p className="text-xs font-medium text-slate-600 mb-1.5">Sindicato Patronal</p>
                 <CheckList
                   opcoes={opcoesPat.map(s => ({ value: s.id, label: (s.sigla ? s.sigla + ' — ' : '') + s.razao_social, cnpj: s.cnpj || '' }))}
-                  selecionados={S.sindicatosPat}
-                  onChange={v => setSels(prev => ({ ...prev, sindicatosPat: v }))}
-                  busca={buscas.sindPat}
-                  onBusca={v => setBuscas(b => ({ ...b, sindPat: v }))}/>
+                  selecionados={S.sindicatosPat} onChange={v => setSels(prev => ({ ...prev, sindicatosPat: v }))}
+                  busca={buscas.sindPat} onBusca={v => setBuscas(b => ({ ...b, sindPat: v }))}/>
               </div>
             </div>
           </StepCard>
 
-          {/* Passo 4 — Instrumento + Vigência */}
           <StepCard number="4" title="Instrumento e Vigência"
             subtitle={opcoesInst.length + ' instrumento(s) disponível(is) para a seleção acima'}
             active={stepAtivo === 4} done={confirmados.has(4)} locked={stepAtivo < 4 && !confirmados.has(3)}
-            summary={resumo(4)}
-            onEdit={() => editar(4)}
-            onConfirm={() => confirmar(4)}
-            onSkip={() => confirmar(4, true)}>
+            summary={resumo(4)} onEdit={() => editar(4)} onConfirm={() => confirmar(4)} onSkip={() => confirmar(4, true)}>
             <CheckList
-              opcoes={opcoesInst}
-              selecionados={S.instrumentos}
+              opcoes={opcoesInst} selecionados={S.instrumentos}
               onChange={v => setSels(prev => ({ ...prev, instrumentos: v }))}
-              busca={buscas.inst}
-              onBusca={v => setBuscas(b => ({ ...b, inst: v }))}/>
+              busca={buscas.inst} onBusca={v => setBuscas(b => ({ ...b, inst: v }))}/>
             <div className="mt-3">
               <label className="label">Vigência</label>
-              <select className="input" value={S.vigencia}
-                onChange={e => setSels(prev => ({ ...prev, vigencia: e.target.value }))}>
+              <select className="input" value={S.vigencia} onChange={e => setSels(prev => ({ ...prev, vigencia: e.target.value }))}>
                 <option value="">Todos (vigentes e vencidos)</option>
                 <option value="vigente">Somente vigentes</option>
                 <option value="alerta">Vence em 60 dias</option>
@@ -364,7 +320,7 @@ export default function Relatorios() {
             </div>
           </StepCard>
 
-          {/* Filtro de cláusulas — opcional, sempre visível */}
+          {/* Filtro de Cláusulas — subcategorias buscadas do banco */}
           <div className="card p-4">
             <div className="flex items-center gap-2 mb-3">
               <div className="w-7 h-7 rounded-full bg-slate-100 text-slate-400 text-sm font-medium flex items-center justify-center flex-shrink-0">+</div>
@@ -390,21 +346,22 @@ export default function Relatorios() {
                 <select multiple className="input text-xs" style={{ height: 120 }}
                   value={S.subcategorias}
                   onChange={e => setSels(prev => ({ ...prev, subcategorias: [...e.target.selectedOptions].map(o => o.value) }))}>
+                  {/* Subcategorias reais do banco — não as genéricas do CATEGORIAS */}
                   {subcatsDisponiveis.map(s => <option key={s}>{s}</option>)}
                 </select>
                 <p className="text-[10px] text-slate-400 mt-0.5">
                   Ctrl+clique para múltiplos. {S.subcategorias.length === 0 ? 'Todas' : S.subcategorias.length + ' selecionada(s)'}
+                  
                 </p>
               </div>
             </div>
           </div>
         </div>
 
-        {/* Coluna lateral — Resumo + Exportar */}
+        {/* Coluna lateral */}
         <div>
           <div className="card p-4 sticky top-4">
             <h3 className="font-medium text-slate-700 text-sm mb-3">Resumo da seleção</h3>
-
             <div className="space-y-2 mb-4 text-xs">
               {[
                 { label: 'Empresa', val: resumo(1), done: confirmados.has(1) },
@@ -421,6 +378,14 @@ export default function Relatorios() {
                 </div>
               ))}
             </div>
+
+            {(S.categorias.length > 0 || S.subcategorias.length > 0) && (
+              <div className="bg-amber-50 rounded-lg p-2 mb-3 text-xs text-amber-700">
+                🔍 Filtro ativo:{' '}
+                {S.categorias.length > 0 && <span>{S.categorias.join(', ')}</span>}
+                {S.subcategorias.length > 0 && <span> › {S.subcategorias.join(', ')}</span>}
+              </div>
+            )}
 
             <div className="bg-surface-50 rounded-lg p-3 mb-4">
               <p className="text-sm font-medium text-slate-700">
@@ -443,23 +408,19 @@ export default function Relatorios() {
               <button className="btn-secondary text-xs w-full py-1.5" onClick={calcularPreview}>
                 Calcular prévia de cláusulas
               </button>
-              <button className="btn-primary w-full"
-                onClick={exportarExcel}
+              <button className="btn-primary w-full" onClick={exportarExcel}
                 disabled={loading || instsParaExportar.length === 0 || !tudo4Confirmado}>
                 {loading ? '⏳ Gerando...' : '📊 Exportar Excel'}
               </button>
-              <button className="btn-secondary w-full"
-                onClick={exportarPDF}
+              <button className="btn-secondary w-full" onClick={exportarPDF}
                 disabled={loading || instsParaExportar.length === 0 || !tudo4Confirmado}>
                 {loading ? '⏳ Gerando...' : '📄 Exportar PDF'}
               </button>
               <button className="text-xs text-slate-400 hover:text-slate-600 w-full py-1 transition-colors"
                 onClick={() => {
-                  setSels({ empresas:[], operacoes:[], sindicatosLab:[], sindicatosPat:[], instrumentos:[], vigencia:'', categorias:[], subcategorias:[] })
-                  setConfirmados(new Set())
-                  setStepAtivo(1)
-                  setBuscas({ emp:'', op:'', sindLab:'', sindPat:'', inst:'' })
-                  setPreview(null)
+                  setSels({ empresas:[],operacoes:[],sindicatosLab:[],sindicatosPat:[],instrumentos:[],vigencia:'',categorias:[],subcategorias:[] })
+                  setConfirmados(new Set()); setStepAtivo(1)
+                  setBuscas({ emp:'',op:'',sindLab:'',sindPat:'',inst:'' }); setPreview(null)
                 }}>
                 ↺ Reiniciar filtros
               </button>
@@ -472,7 +433,6 @@ export default function Relatorios() {
             <a href="#/comparativo" className="btn-secondary text-xs">Ir para Comparativo →</a>
           </div>
         </div>
-
       </div>
     </div>
   )
