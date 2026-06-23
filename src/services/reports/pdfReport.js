@@ -146,14 +146,15 @@ function renderSegmentosColoridos(doc, segs, cellX, cellY, cellW, cellH, fontSiz
   doc.setTextColor(0, 0, 0)
 }
 
-// Threshold empírico: col 65mm, font 6.5 → ~50 chars/linha, ~60 linhas/página → ~3000 chars/página.
-// Abaixo do threshold: a cláusula cabe em 1 página → usa diff colorido.
-// Acima: quebra páginas → usa texto simples (autoTable trata a quebra corretamente).
-const CHARS_POR_PAGINA = 3000
-
-function cabeEmUmaPagina(textoA, textoB) {
-  return (textoA || '').length <= CHARS_POR_PAGINA &&
-         (textoB || '').length <= CHARS_POR_PAGINA
+// Estima quantas páginas uma célula de conteúdo vai ocupar dado o fontSize e largura
+function estimarPaginas(doc, texto, largura, fontSize, pageH = 210, startY = 36, marginB = 8) {
+  if (!texto) return 1
+  doc.setFontSize(fontSize)
+  const lineH = fontSize * 0.42
+  const linhas = doc.splitTextToSize(texto, largura - 3)
+  const alturaTotal = linhas.length * lineH + 3
+  const alturaUtil = pageH - startY - marginB
+  return Math.ceil(alturaTotal / alturaUtil)
 }
 
 export function gerarPDFComparativo(resultado, instrumentoA, instrumentoB) {
@@ -171,37 +172,31 @@ export function gerarPDFComparativo(resultado, instrumentoA, instrumentoB) {
   const FONT_SIZE = 6.5
   const COL_WIDTHS = { 0:22, 1:12, 2:36, 3:65, 4:12, 5:36, 6:65 }
 
-  // Pré-processa: calcula diff e decide se usa renderer colorido.
-  // Guarda os segs em Map EXTERNO indexado por rowIndex — assim o didDrawCell
-  // os encontra mesmo quando o jsPDF-autoTable quebra a célula entre páginas
-  // (nesse caso data.cell.raw perde os campos customizados como _segs).
-  const segsMapA = new Map()  // rowIndex → segsA
-  const segsMapB = new Map()  // rowIndex → segsB
-
-  const bodyRows = resultado.map((r, rowIndex) => {
+  // Pré-processa: calcula diff e decide se usará o renderer colorido.
+  // O renderer colorido só funciona quando a linha cabe em UMA página.
+  // Para linhas que quebram entre páginas, usa texto simples com overflow:linebreak
+  // (o autoTable já quebra corretamente) — o diff colorido fica como bônus.
+  const linhasProcessadas = resultado.map(r => {
     const hasDiff = r.status.label === 'ALTERADA'
     const tA = r.clausulaA?.conteudo || ''
     const tB = r.clausulaB?.conteudo || ''
+    let segsA = null, segsB = null
 
-    if (hasDiff && cabeEmUmaPagina(tA, tB)) {
-      const { segsA, segsB } = computeSegmentos(tA, tB)
-      segsMapA.set(rowIndex, segsA)
-      segsMapB.set(rowIndex, segsB)
+    if (hasDiff) {
+      // Verifica se o conteúdo cabe em uma página (estimativa por tamanho de texto)
+      const paginasA = estimarPaginas(doc, tA, COL_WIDTHS[3], FONT_SIZE)
+      const paginasB = estimarPaginas(doc, tB, COL_WIDTHS[6], FONT_SIZE)
+      // Usa renderer colorido apenas se cabe em 1 página
+      if (paginasA <= 1 && paginasB <= 1) {
+        ;({ segsA, segsB } = computeSegmentos(tA, tB))
+      }
     }
-
-    return [
-      { content: r.status.label },
-      { content: r.clausulaA?.numero || '' },
-      { content: r.clausulaA?.titulo || '' },
-      { content: tA },
-      { content: r.clausulaB?.numero || '' },
-      { content: r.clausulaB?.titulo || '' },
-      { content: tB },
-    ]
+    return { r, tA, tB, segsA, segsB, hasDiff }
   })
 
   doc.autoTable({
     startY: 36,
+    // showHead: 'everyPage' garante cabeçalho em toda página nova
     showHead: 'everyPage',
     head: [[
       'Status', 'Nº',
@@ -211,7 +206,17 @@ export function gerarPDFComparativo(resultado, instrumentoA, instrumentoB) {
       nomeB.slice(0, 28) + '\nTítulo',
       nomeB.slice(0, 28) + '\nConteúdo',
     ]],
-    body: bodyRows,
+    body: linhasProcessadas.map(({ r, tA, tB, segsA, segsB }) => [
+      { content: r.status.label },
+      { content: r.clausulaA?.numero || '' },
+      { content: r.clausulaA?.titulo || '' },
+      // Se tem segs (cabe em 1 página) → texto branco (renderer vai redesenhar colorido)
+      // Se não tem segs (quebra páginas) → texto normal com overflow:linebreak do autoTable
+      { content: tA, _segs: segsA },
+      { content: r.clausulaB?.numero || '' },
+      { content: r.clausulaB?.titulo || '' },
+      { content: tB, _segs: segsB },
+    ]),
 
     styles: {
       fontSize: FONT_SIZE,
@@ -243,24 +248,18 @@ export function gerarPDFComparativo(resultado, instrumentoA, instrumentoB) {
         }
       }
 
-      // dataRowIndex = índice global da linha no array body (não reinicia a cada página)
-      const ri = data.row.dataRowIndex ?? data.row.index
-      if (data.column.index === 3 && segsMapA.has(ri)) {
-        data.cell.styles.textColor = [255, 255, 255]
-      }
-      if (data.column.index === 6 && segsMapB.has(ri)) {
+      // Células com diff e que cabem em 1 página: oculta texto (será redesenhado colorido)
+      if ((data.column.index === 3 || data.column.index === 6) && data.cell.raw?._segs) {
         data.cell.styles.textColor = [255, 255, 255]
       }
     },
 
     didDrawCell: (data) => {
       if (data.section !== 'body') return
-      // dataRowIndex = índice global — correto mesmo em quebras de página
-      const ri = data.row.dataRowIndex ?? data.row.index
-      let segs = null
-      if (data.column.index === 3) segs = segsMapA.get(ri) || null
-      if (data.column.index === 6) segs = segsMapB.get(ri) || null
+      if (data.column.index !== 3 && data.column.index !== 6) return
+      const segs = data.cell.raw?._segs
       if (!segs || segs.length === 0) return
+      // Renderiza colorido passando cellHeight real — o renderer respeita esse limite
       renderSegmentosColoridos(
         doc, segs,
         data.cell.x, data.cell.y,
