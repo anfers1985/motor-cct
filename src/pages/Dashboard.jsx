@@ -286,7 +286,7 @@ export default function Dashboard() {
               <div>
                 <h2 className="font-display font-semibold text-slate-700">📈 Evolução Acumulada — IPCA / INPC vs Reajuste</h2>
                 <p className="text-xs text-slate-400 mt-0.5">
-                  Variação acumulada progressiva (%) — últimos 12 meses. Clique nas séries da legenda para mostrar/ocultar.
+                  Variação acumulada progressiva (%) — últimos 12 meses. Valores exibidos em cada ponto. Clique nas séries para mostrar/ocultar.
                 </p>
               </div>
               {!chartLoading && chartData && (

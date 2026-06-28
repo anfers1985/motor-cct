@@ -5,13 +5,13 @@
 export default function LineChart({
   series,
   labels,
-  height = 220,
+  height = 260,
   formatValue = v => v?.toFixed(2) + '%',
   seriesVisiveis,
   onToggleSerie,
 }) {
   const W = 700, H = height
-  const padL = 48, padR = 10, padT = 10, padB = 28
+  const padL = 48, padR = 16, padT = 16, padB = 28
   const innerW = W - padL - padR
   const innerH = H - padT - padB
 
@@ -52,6 +52,9 @@ export default function LineChart({
 
   const hasToggle = !!onToggleSerie
 
+  // Decide quais índices de label mostrar (máximo 12 para não sobrelotar)
+  const labelStep = Math.ceil(n / 12)
+
   return (
     <div className="w-full overflow-x-auto">
       <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ minWidth: 480 }} preserveAspectRatio="xMidYMid meet">
@@ -70,7 +73,7 @@ export default function LineChart({
 
         {/* Eixo X */}
         {labels.map((l, i) => (
-          (i % Math.ceil(n / 12) === 0 || i === n - 1) && (
+          (i % labelStep === 0 || i === n - 1) && (
             <text key={i} x={x(i)} y={H - 8} textAnchor="middle" fontSize="9" fill="#94a3b8">{l}</text>
           )
         ))}
@@ -82,11 +85,34 @@ export default function LineChart({
           return (
             <g key={s.name}>
               <path d={pathFor(s.data)} fill="none" stroke={s.color} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round"/>
-              {s.data.map((v, i) => v != null && (
-                <circle key={i} cx={x(i)} cy={y(v)} r="2.5" fill={s.color}>
-                  <title>{labels[i]}: {formatValue(v)}</title>
-                </circle>
-              ))}
+              {s.data.map((v, i) => {
+                if (v == null) return null
+                const cx = x(i), cy = y(v)
+                const label = formatValue(v)
+                // Posiciona o label acima ou abaixo dependendo do espaço
+                const labelY = cy - 7 < padT + 12 ? cy + 13 : cy - 7
+                return (
+                  <g key={i}>
+                    <circle cx={cx} cy={cy} r="3" fill={s.color} />
+                    {/* Label do valor sempre visível em cada ponto */}
+                    <text
+                      x={cx}
+                      y={labelY}
+                      textAnchor="middle"
+                      fontSize="7.5"
+                      fontWeight="600"
+                      fill={s.color}
+                      style={{ pointerEvents: 'none' }}
+                    >
+                      {label}
+                    </text>
+                    {/* Tooltip ao hover via <title> */}
+                    <circle cx={cx} cy={cy} r="6" fill="transparent" stroke="none">
+                      <title>{labels[i]}: {label}</title>
+                    </circle>
+                  </g>
+                )
+              })}
             </g>
           )
         })}

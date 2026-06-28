@@ -44,7 +44,18 @@ REGRAS OBRIGATÓRIAS:
 4. CATEGORIAS (use exatamente uma):
    Remuneração | Jornada de Trabalho | Benefícios | Saúde e Segurança | Estabilidade e Garantias | FGTS e Rescisão | Relações Sindicais | Penalidades | Capacitação | Igualdade e Diversidade | Disposições Gerais
 
-5. SUBCATEGORIA: use uma subcategoria específica e descritiva (ex: "Piso Salarial", "PLR", "Horas Extras", "CIPA")
+5. SUBCATEGORIA: use SEMPRE uma subcategoria do vocabulário controlado abaixo. Se nenhuma encaixar perfeitamente, use a mais próxima. NUNCA invente variações novas.
+   Vocabulário de subcategorias:
+   Piso Salarial | Reajuste | PLR/PPR | Gratificação | Gratificação por Tempo de Serviço | Adicional de Função | Adicional Noturno | Equiparação Salarial | Comissão | 13º Salário | Comprovante de Pagamento | Descontos em Folha |
+   Banco de Horas | Hora Extra | Duração da Jornada | Compensação de Jornada | Controle de Ponto | Trabalho Noturno | Sobreaviso | Intervalo Intrajornada | Abono de Faltas | Flexibilidade para Estudantes |
+   Auxílio Alimentação | Vale-Alimentação | Vale-Refeição | Vale-Transporte | Cesta Básica | Plano de Saúde | Plano Odontológico | Seguro de Vida e Auxílio Funeral | Auxílio Farmácia | Auxílio Doença/Acidente | Empréstimos Consignados | Manutenção de Benefícios |
+   EPI | Exames Médicos | Adicionais de Insalubridade/Periculosidade | CIPA | PCMSO/PPRA/PGR | Ergonomia | Prevenção de Acidentes e Doenças | Uniformes | Treinamento e Informação | Direito de Recusa |
+   Pré-Aposentadoria | Aviso Prévio | Estabilidade Gestante | Estabilidade Pós-Acidente/Doença Profissional | Dirigente Sindical |
+   FGTS | Multa Rescisória | Verbas Rescisórias | Homologação |
+   Férias | Abono de Férias | Licença Maternidade | Licença Paternidade |
+   Contribuição Assistencial | Garantias a Diretores Sindicais | Informações Sindicais | Resolução de Conflitos | Acesso do Sindicato ao Local de Trabalho |
+   Multa por Descumprimento | Cláusula Penal |
+   Vigência | Abrangência | Hierarquia de Normas | Condições Gerais | Outras
 
 6. OBSERVAÇÕES: escreva 1-2 frases sobre o impacto prático para o empregador/RH
 

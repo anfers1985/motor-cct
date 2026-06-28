@@ -104,16 +104,20 @@ function computeSegmentos(textoA, textoB) {
   return { segsA: merge(ops,['eq','rem']), segsB: merge(ops,['eq','add']) }
 }
 
-// ─── Renderer colorido — só chamado quando a célula inteira está em UMA página ──
-// Recebe cellY e cellHeight reais vindos do didDrawCell.
+// ─── Renderer colorido ────────────────────────────────────────────────────────
+// Renderiza segmentos coloridos dentro de uma célula da tabela.
+// Funciona tanto para células de página única quanto multi-página:
+// em multi-página, renderiza até o final da célula (cellY + cellHeight).
 function renderSegmentosColoridos(doc, segs, cellX, cellY, cellW, cellH, fontSize) {
   if (!segs || segs.length === 0) return
   doc.setFontSize(fontSize)
   const pad = 1.5
   const x0 = cellX + pad
   const maxX = cellX + cellW - pad
-  // Limite inferior: não sair da célula atual (evita sobreposição na mesma página)
-  const maxY = cellY + cellH - 0.5
+  // Para células multi-página, cellH pode ser muito grande (toda a altura da página);
+  // limitamos ao que cabe na página atual para evitar renderização fora dos limites.
+  const pageH = doc.internal.pageSize.getHeight()
+  const effectiveMaxY = Math.min(cellY + cellH - 0.5, pageH - 6)
   const lineH = fontSize * 0.42
   let cx = x0
   let cy = cellY + pad + lineH
@@ -125,7 +129,7 @@ function renderSegmentosColoridos(doc, segs, cellX, cellY, cellW, cellH, fontSiz
 
     for (const token of seg.text.split(/(\s+)/)) {
       if (!token) continue
-      if (cy > maxY) break
+      if (cy > effectiveMaxY) break
       const tw = doc.getTextWidth(token)
       const isSpace = /^\s+$/.test(token)
       if (isSpace) {
@@ -133,7 +137,7 @@ function renderSegmentosColoridos(doc, segs, cellX, cellY, cellW, cellH, fontSiz
         continue
       }
       if (cx + tw > maxX && cx > x0) { cx = x0; cy += lineH }
-      if (cy > maxY) break
+      if (cy > effectiveMaxY) break
       doc.text(token, cx, cy)
       if (seg.type === 'rem') {
         doc.setDrawColor(109, 40, 217); doc.setLineWidth(0.15)
@@ -144,17 +148,6 @@ function renderSegmentosColoridos(doc, segs, cellX, cellY, cellW, cellH, fontSiz
     }
   }
   doc.setTextColor(0, 0, 0)
-}
-
-// Estima quantas páginas uma célula de conteúdo vai ocupar dado o fontSize e largura
-function estimarPaginas(doc, texto, largura, fontSize, pageH = 210, startY = 36, marginB = 8) {
-  if (!texto) return 1
-  doc.setFontSize(fontSize)
-  const lineH = fontSize * 0.42
-  const linhas = doc.splitTextToSize(texto, largura - 3)
-  const alturaTotal = linhas.length * lineH + 3
-  const alturaUtil = pageH - startY - marginB
-  return Math.ceil(alturaTotal / alturaUtil)
 }
 
 export function gerarPDFComparativo(resultado, instrumentoA, instrumentoB) {
@@ -172,10 +165,9 @@ export function gerarPDFComparativo(resultado, instrumentoA, instrumentoB) {
   const FONT_SIZE = 6.5
   const COL_WIDTHS = { 0:22, 1:12, 2:36, 3:65, 4:12, 5:36, 6:65 }
 
-  // Pré-processa: calcula diff e decide se usará o renderer colorido.
-  // O renderer colorido só funciona quando a linha cabe em UMA página.
-  // Para linhas que quebram entre páginas, usa texto simples com overflow:linebreak
-  // (o autoTable já quebra corretamente) — o diff colorido fica como bônus.
+  // Pré-processa: calcula diff para todas as cláusulas ALTERADAS.
+  // O renderer colorido agora funciona também em cláusulas multi-página,
+  // renderizando os segmentos até o limite visível de cada célula na página atual.
   const linhasProcessadas = resultado.map(r => {
     const hasDiff = r.status.label === 'ALTERADA'
     const tA = r.clausulaA?.conteudo || ''
@@ -183,11 +175,8 @@ export function gerarPDFComparativo(resultado, instrumentoA, instrumentoB) {
     let segsA = null, segsB = null
 
     if (hasDiff) {
-      // Verifica se o conteúdo cabe em uma página (estimativa por tamanho de texto)
-      const paginasA = estimarPaginas(doc, tA, COL_WIDTHS[3], FONT_SIZE)
-      const paginasB = estimarPaginas(doc, tB, COL_WIDTHS[6], FONT_SIZE)
-      // Usa renderer colorido apenas se cabe em 1 página
-      if (paginasA <= 1 && paginasB <= 1) {
+      // Limita LCS a textos de até ~15.000 chars para evitar travamento com textos muito longos
+      if (tA.length + tB.length < 15000) {
         ;({ segsA, segsB } = computeSegmentos(tA, tB))
       }
     }
@@ -248,7 +237,7 @@ export function gerarPDFComparativo(resultado, instrumentoA, instrumentoB) {
         }
       }
 
-      // Células com diff e que cabem em 1 página: oculta texto (será redesenhado colorido)
+      // Células com diff: oculta texto padrão (o renderer colorido vai redesenhar)
       if ((data.column.index === 3 || data.column.index === 6) && data.cell.raw?._segs) {
         data.cell.styles.textColor = [255, 255, 255]
       }

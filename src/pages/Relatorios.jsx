@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { supabase } from '../services/supabase'
 import { useAuth } from '../hooks/useAuth'
 import { vigenciaStatus } from '../utils/formatters'
-import { CATEGORIAS } from '../utils/categorias'
+import { CATEGORIAS, normalizarSubcategoria, SUBCATEGORIA_NORMALIZACAO } from '../utils/categorias'
 import { gerarExcelMultiplo, gerarExcelInstrumento } from '../services/reports/excelReport'
 import { gerarPDFInstrumento } from '../services/reports/pdfReport'
 import CheckList from '../components/UI/CheckList'
@@ -186,13 +186,37 @@ export default function Relatorios() {
   async function buscarDados() {
     const insts = filtrarParaExportar()
     if (!insts.length) return { insts: [], clausulas: [] }
+
+    // Expande subcategorias selecionadas para incluir variações conhecidas da IA
+    // Ex: usuário seleciona "Reajuste" → busca também "Reajuste Salarial"
+    let subcatsFiltro = sels.subcategorias
+    if (subcatsFiltro.length > 0) {
+      const expandidas = new Set(subcatsFiltro)
+      // Adiciona as variantes que normalizam para as selecionadas
+      Object.entries(SUBCATEGORIA_NORMALIZACAO).forEach(([variante, canonico]) => {
+        if (expandidas.has(canonico)) {
+          // Adiciona a variante original com capitalização correta
+          // (o banco guarda o valor que a IA gerou, não o normalizado)
+          expandidas.add(variante.charAt(0).toUpperCase() + variante.slice(1))
+          // Também adiciona o mapeamento inverso capitalizado
+        }
+      })
+      subcatsFiltro = [...expandidas]
+    }
+
     let clausulas = []
     for (const inst of insts) {
       let q = supabase.from('clausulas').select('*').eq('instrumento_id', inst.id).eq('user_id', user.id)
       if (sels.categorias.length > 0)    q = q.in('categoria', sels.categorias)
-      if (sels.subcategorias.length > 0) q = q.in('subcategoria', sels.subcategorias)
+      if (subcatsFiltro.length > 0)      q = q.in('subcategoria', subcatsFiltro)
       const { data } = await q
-      clausulas = clausulas.concat(data || [])
+      // Aplica filtro local adicional: normaliza subcategoria da cláusula e verifica
+      const dados = (data || []).filter(c => {
+        if (sels.subcategorias.length === 0) return true
+        const normalizada = normalizarSubcategoria(c.subcategoria)
+        return sels.subcategorias.includes(c.subcategoria) || sels.subcategorias.includes(normalizada)
+      })
+      clausulas = clausulas.concat(dados)
     }
     return { insts, clausulas }
   }

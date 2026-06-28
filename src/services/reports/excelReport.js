@@ -1,6 +1,7 @@
 import * as XLSX from 'xlsx'
 import { vigenciaStatus } from '../../utils/formatters'
 import { ordenarClausulas } from '../../utils/ordenacao'
+import { normalizarSubcategoria } from '../../utils/categorias'
 
 function statusVigencia(fim) {
   const s = vigenciaStatus(fim)
@@ -52,7 +53,7 @@ export async function gerarExcelInstrumento(instrumento, clausulas, empresa, ope
     'Nº Cláusula': c.numero || '',
     'Título da Cláusula': c.titulo || '',
     'Categoria': c.categoria || '',
-    'Subcategoria': c.subcategoria || '',
+    'Subcategoria': normalizarSubcategoria(c.subcategoria) || '',
     'Conteúdo Integral da Cláusula': conteudoCompleto(c),
     'Tags': (c.tags || []).join(', '),
     'Observações / Contextualização para o Usuário': c.observacoes || '',
@@ -125,7 +126,7 @@ export async function gerarExcelMultiplo(instrumentos, todasClausulas, empresas,
       'Nº Cláusula': c.numero || '',
       'Título da Cláusula': c.titulo || '',
       'Categoria': c.categoria || '',
-      'Subcategoria': c.subcategoria || '',
+      'Subcategoria': normalizarSubcategoria(c.subcategoria) || '',
       'Conteúdo Integral da Cláusula': conteudoCompleto(c),
       'Tags': (c.tags || []).join(', '),
       'Observações / Contextualização para o Usuário': c.observacoes || '',
@@ -226,7 +227,7 @@ export async function gerarExcelClausulas(clausulas, instrumento) {
     'Nº Cláusula': c.numero || '',
     'Título': c.titulo || '',
     'Categoria': c.categoria || '',
-    'Subcategoria': c.subcategoria || '',
+    'Subcategoria': normalizarSubcategoria(c.subcategoria) || '',
     'Conteúdo Integral': conteudoCompleto(c),
     'Tags': (c.tags || []).join(', '),
     'Observações': c.observacoes || '',
