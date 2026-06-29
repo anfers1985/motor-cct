@@ -8,6 +8,7 @@ const NAV = [
   { to: '/instrumentos', icon: '📄', label: 'Instrumentos' },
   { to: '/clausulas', icon: '🔍', label: 'Consulta de Cláusulas' },
   { to: '/comparativo', icon: '⚖️', label: 'Comparativo' },
+  { to: '/negociacao', icon: '🤝', label: 'Negociação Sindical' },
   { to: '/relatorios', icon: '📊', label: 'Relatórios' },
   { to: '/configuracoes', icon: '⚙️', label: 'Configurações' },
 ]

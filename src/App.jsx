@@ -8,6 +8,7 @@ import Empresas from './pages/Empresas'
 import Instrumentos from './pages/Instrumentos'
 import Clausulas from './pages/Clausulas'
 import Comparativo from './pages/Comparativo'
+import Negociacao from './pages/Negociacao'
 import Relatorios from './pages/Relatorios'
 import Configuracoes from './pages/Configuracoes'
 
@@ -43,6 +44,7 @@ export default function App() {
         <Route path="/instrumentos" element={<ProtectedRoute><Instrumentos /></ProtectedRoute>} />
         <Route path="/clausulas" element={<ProtectedRoute><Clausulas /></ProtectedRoute>} />
         <Route path="/comparativo" element={<ProtectedRoute><Comparativo /></ProtectedRoute>} />
+        <Route path="/negociacao" element={<ProtectedRoute><Negociacao /></ProtectedRoute>} />
         <Route path="/relatorios" element={<ProtectedRoute><Relatorios /></ProtectedRoute>} />
         <Route path="/configuracoes" element={<ProtectedRoute><Configuracoes /></ProtectedRoute>} />
         <Route path="*" element={<Navigate to="/" replace />} />
