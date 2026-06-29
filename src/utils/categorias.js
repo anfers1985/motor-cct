@@ -167,6 +167,9 @@ export const SUBCATEGORIA_NORMALIZACAO = {
 
   // Reajuste
   'reajuste salarial': 'Reajuste',
+  'reajuste': 'Reajuste',
+  'correção salarial': 'Reajuste',
+  'correcao salarial': 'Reajuste',
 
   // PLR
   'plr': 'PLR/PPR',

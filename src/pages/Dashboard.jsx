@@ -52,7 +52,7 @@ export default function Dashboard() {
   const [apiIndisponivel, setApiIndisponivel] = useState(false)
   const [mostrarTabela, setMostrarTabela] = useState(false)
   // Controle de visibilidade de cada série no gráfico
-  const [seriesVisiveis, setSeriesVisiveis] = useState(new Set(['IPCA acum.', 'INPC acum.', 'Reajuste CCTs (valor pontual)']))
+  const [seriesVisiveis, setSeriesVisiveis] = useState(new Set(['IPCA acum.', 'INPC acum.', 'Reajuste médio (CCTs)']))
 
   function toggleSerie(name) {
     setSeriesVisiveis(prev => {
@@ -99,50 +99,42 @@ export default function Dashboard() {
       const [{ meses: indices, apiIndisponivel: apiErr }, { data: clausulas }] = await Promise.all([
         buscarIndices(12),
         supabase.from('clausulas')
-          .select('percentual, instrumento_id, instrumentos(vigencia_inicio, nome)')
+          .select('percentual, instrumento_id, instrumentos(vigencia_inicio)')
           .eq('categoria', 'Remuneração')
           .ilike('subcategoria', '%reajuste%')
           .eq('user_id', user.id),
       ])
       setApiIndisponivel(apiErr)
-
-      // Mapeia reajustes por mês: um reajuste de CCT é um valor pontual (não mensal).
-      // A CCT com vigência_inicio em abril tem reajuste de X% — esse valor aparece SOMENTE
-      // no mês em que a vigência começa. Não acumulamos com meses anteriores.
-      // Para fins do gráfico, mostramos o MAIOR reajuste do mês (quando há múltiplas CCTs).
-      // Isso evita distorções de "acumulado" que não fazem sentido para reajustes pontuais.
       const porMes = {}
       for (const c of clausulas || []) {
         const vig = c.instrumentos?.vigencia_inicio
         const pct = parseFloat(String(c.percentual).replace(',', '.'))
-        if (!vig || isNaN(pct) || pct <= 0) continue
+        // Filtra valores inválidos ou fora de intervalo razoável (0–100%)
+        if (!vig || isNaN(pct) || pct <= 0 || pct > 100) continue
         const key = vig.slice(0, 7)
         if (!porMes[key]) porMes[key] = []
         porMes[key].push(pct)
       }
+      const reajusteMensal = meses.map(m => {
+        const vals = porMes[m.key]
+        if (!vals?.length) return null
+        return parseFloat((vals.reduce((a, b) => a + b, 0) / vals.length).toFixed(4))
+      })
 
       const ipcaMensal  = indices.map(i => i.ipca)
       const inpcMensal  = indices.map(i => i.inpc)
 
-      // Reajuste: valor pontual no mês de vigência (média quando há múltiplas CCTs)
-      // Não é uma série acumulada — é plotado como ponto isolado no mês correto
-      const reajusteMensal = meses.map(m => {
-        const vals = porMes[m.key]
-        if (!vals?.length) return null
-        return vals.reduce((a, b) => a + b, 0) / vals.length
-      })
-
       setChartData({
         labels: indices.map(i => i.label),
         keys: meses.map(m => m.key),
+        // Séries mensais (para tabela)
         ipcaMensal,
         inpcMensal,
         reajusteMensal,
-        // Séries acumuladas para IPCA e INPC (variações mensais contínuas)
+        // Séries acumuladas (para gráfico)
         ipcaAcum:    serieAcumulada(ipcaMensal),
         inpcAcum:    serieAcumulada(inpcMensal),
-        // Reajuste: valor pontual no mês (NÃO acumulado — CCT não é variação mensal)
-        reajusteAcum: reajusteMensal,
+        reajusteAcum: serieAcumulada(reajusteMensal),
       })
       setChartLoading(false)
     }
@@ -295,7 +287,7 @@ export default function Dashboard() {
               <div>
                 <h2 className="font-display font-semibold text-slate-700">📈 Evolução Acumulada — IPCA / INPC vs Reajuste</h2>
                 <p className="text-xs text-slate-400 mt-0.5">
-                  IPCA e INPC: variação acumulada progressiva (%) — últimos 12 meses. Reajuste CCTs: valor pontual no mês de vigência de cada CCT cadastrada. Clique nas séries para mostrar/ocultar.
+                  Variação acumulada progressiva (%) — últimos 12 meses. Valores exibidos em cada ponto. Clique nas séries para mostrar/ocultar.
                 </p>
               </div>
               {!chartLoading && chartData && (
@@ -309,7 +301,6 @@ export default function Dashboard() {
                   {acumulado(chartData.reajusteMensal) != null && (
                     <span className="text-xs text-slate-500">
                       Reajuste médio: <span className="font-semibold text-emerald-600">{acumuladoLabel(chartData.reajusteMensal)}</span>
-                      <span className="text-slate-400 ml-1">(média simples das CCTs)</span>
                     </span>
                   )}
                   <button onClick={() => setMostrarTabela(v => !v)} className="btn-secondary text-xs py-1">
@@ -336,7 +327,7 @@ export default function Dashboard() {
                   series={[
                     { name: 'IPCA acum.',            color: '#2563eb', data: chartData.ipcaAcum    },
                     { name: 'INPC acum.',            color: '#9333ea', data: chartData.inpcAcum    },
-                  { name: 'Reajuste CCTs (valor pontual)', color: '#16a34a', data: chartData.reajusteAcum },
+                    { name: 'Reajuste médio (CCTs)', color: '#16a34a', data: chartData.reajusteAcum },
                   ]}
                   seriesVisiveis={seriesVisiveis}
                   onToggleSerie={toggleSerie}
@@ -346,7 +337,6 @@ export default function Dashboard() {
                 {chartData.reajusteAcum.every(v => v == null) && (
                   <p className="text-xs text-slate-400 text-center mt-2">
                     Nenhuma cláusula de reajuste salarial encontrada nos instrumentos cadastrados para os últimos 12 meses.
-                    O percentual de reajuste deve estar preenchido no campo "Percentual" da cláusula de Reajuste.
                   </p>
                 )}
 
