@@ -99,7 +99,7 @@ export default function Dashboard() {
       const [{ meses: indices, apiIndisponivel: apiErr }, { data: clausulas }] = await Promise.all([
         buscarIndices(12),
         supabase.from('clausulas')
-          .select('percentual, instrumento_id, instrumentos(vigencia_inicio)')
+          .select('percentual, instrumento_id, instrumentos(vigencia_inicio, tipo)')
           .eq('categoria', 'Remuneração')
           .ilike('subcategoria', '%reajuste%')
           .eq('user_id', user.id),
@@ -108,6 +108,9 @@ export default function Dashboard() {
       const porMes = {}
       for (const c of clausulas || []) {
         const vig = c.instrumentos?.vigencia_inicio
+        const tipo = c.instrumentos?.tipo || ''
+        // Prática Interna e Proposta Sindical não entram no gráfico de reajuste
+        if (['Prática Interna', 'Proposta Sindical'].includes(tipo)) continue
         const pct = parseFloat(String(c.percentual).replace(',', '.'))
         // Filtra valores inválidos ou fora de intervalo razoável (0–100%)
         if (!vig || isNaN(pct) || pct <= 0 || pct > 100) continue
@@ -121,6 +124,12 @@ export default function Dashboard() {
         return parseFloat((vals.reduce((a, b) => a + b, 0) / vals.length).toFixed(4))
       })
 
+      // Reajuste no gráfico acumulado: cada ponto mostra o reajuste pontual do mês.
+      // Não acumulamos compostos entre instrumentos distintos — cada CCT/ACT tem
+      // seu próprio percentual, aplicado na sua data-base, sem relação com outros meses.
+      // IPCA e INPC acumulam normalmente pois são variações mensais sequenciais.
+      const reajusteAcum = reajusteMensal.map(v => v) // valor pontual, sem acumulação composta
+
       const ipcaMensal  = indices.map(i => i.ipca)
       const inpcMensal  = indices.map(i => i.inpc)
 
@@ -132,9 +141,9 @@ export default function Dashboard() {
         inpcMensal,
         reajusteMensal,
         // Séries acumuladas (para gráfico)
-        ipcaAcum:    serieAcumulada(ipcaMensal),
-        inpcAcum:    serieAcumulada(inpcMensal),
-        reajusteAcum: serieAcumulada(reajusteMensal),
+        ipcaAcum:     serieAcumulada(ipcaMensal),
+        inpcAcum:     serieAcumulada(inpcMensal),
+        reajusteAcum, // valor pontual por mês, sem acumulação composta
       })
       setChartLoading(false)
     }

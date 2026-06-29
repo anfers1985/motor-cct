@@ -1,3 +1,4 @@
+// ─── Tokenização e similaridade Jaccard ──────────────────────────────────────
 const STOPWORDS = new Set([
   'a','o','e','de','do','da','dos','das','em','no','na','nos','nas',
   'que','com','para','por','se','ao','às','um','uma','uns','umas',
@@ -29,7 +30,116 @@ export function similaridade(textoA, textoB) {
   return jaccard(tA, tB)
 }
 
-// Detecta mudanças em valores numéricos (preços, percentuais, datas)
+// ─── Extração de valores numéricos ───────────────────────────────────────────
+// Extrai percentuais e valores monetários de um texto
+function extrairNumericos(texto) {
+  if (!texto) return { percentuais: [], monetarios: [], todos: [] }
+  const t = texto.replace(/\./g, '').replace(/,/g, '.')
+
+  // Percentuais: ex "5,32%", "4.11%"
+  const percentuais = [...(t.matchAll(/(\d+(?:\.\d+)?)\s*%/g) || [])]
+    .map(m => parseFloat(m[1])).filter(n => !isNaN(n) && n > 0 && n < 200)
+
+  // Valores monetários: ex "R$ 3.190,00", "R$ 30,00"
+  const monetarios = [...(texto.matchAll(/R\$\s*([\d.]+(?:,\d{2})?)/g) || [])]
+    .map(m => parseFloat(m[1].replace(/\./g, '').replace(',', '.')))
+    .filter(n => !isNaN(n) && n > 0)
+
+  return { percentuais, monetarios, todos: [...percentuais, ...monetarios] }
+}
+
+// ─── Nova terminologia de status ─────────────────────────────────────────────
+// Contexto: A é a fonte-base, B é a fonte comparada
+// Superior = B tem condição melhor para o trabalhador que A
+// Inferior  = B tem condição pior para o trabalhador que A
+// Igual     = conteúdo idêntico ou numericamente equivalente
+// Modificada = redação diferente mas sem valores para comparar
+// Exclusiva  = existe só em um dos instrumentos
+
+export const STATUS_CONFIG = {
+  Superior:   { cls: 'bg-emerald-100 text-emerald-800 border-emerald-300', order: 0, icone: '▲' },
+  Inferior:   { cls: 'bg-red-100 text-red-700 border-red-300',             order: 1, icone: '▼' },
+  Igual:      { cls: 'bg-slate-100 text-slate-600 border-slate-300',       order: 2, icone: '=' },
+  Modificada: { cls: 'bg-blue-100 text-blue-800 border-blue-300',          order: 3, icone: '~' },
+  Exclusiva:  { cls: 'bg-purple-100 text-purple-800 border-purple-300',    order: 4, icone: '◆' },
+}
+
+// ─── Avaliação de superioridade com resumo ────────────────────────────────────
+// Retorna { status, resumo } onde status é um dos termos acima
+// e resumo é uma string explicando o motivo
+
+export function avaliarSuperioridade(textoBase, textoComparado, tituloClausula = '') {
+  if (!textoBase && !textoComparado) return { status: 'Exclusiva', resumo: 'Cláusula sem conteúdo em ambas as fontes.' }
+  if (!textoBase) return { status: 'Exclusiva', resumo: 'Cláusula presente apenas na fonte comparada (nova em relação à base).' }
+  if (!textoComparado) return { status: 'Exclusiva', resumo: 'Cláusula presente apenas na fonte base (não encontrada na comparada).' }
+
+  const numBase = extrairNumericos(textoBase)
+  const numComp = extrairNumericos(textoComparado)
+
+  // ── Comparação numérica ──
+  // Prioridade 1: percentuais (reajuste, adicional, etc.)
+  if (numBase.percentuais.length > 0 && numComp.percentuais.length > 0) {
+    const maxBase = Math.max(...numBase.percentuais)
+    const maxComp = Math.max(...numComp.percentuais)
+    const diff = maxComp - maxBase
+    const diffPct = Math.abs(diff).toFixed(2).replace('.', ',')
+    if (Math.abs(diff) < 0.01) {
+      return {
+        status: 'Igual',
+        resumo: `Percentual idêntico em ambas as fontes: ${maxBase.toFixed(2).replace('.', ',')}%.`,
+      }
+    }
+    if (diff > 0) {
+      return {
+        status: 'Superior',
+        resumo: `A fonte comparada prevê ${maxComp.toFixed(2).replace('.', ',')}% contra ${maxBase.toFixed(2).replace('.', ',')}% da base — diferença de +${diffPct} p.p. em favor da comparada.`,
+      }
+    }
+    return {
+      status: 'Inferior',
+      resumo: `A fonte comparada prevê ${maxComp.toFixed(2).replace('.', ',')}% contra ${maxBase.toFixed(2).replace('.', ',')}% da base — diferença de −${diffPct} p.p. desfavorável à comparada.`,
+    }
+  }
+
+  // Prioridade 2: valores monetários
+  if (numBase.monetarios.length > 0 && numComp.monetarios.length > 0) {
+    const maxBase = Math.max(...numBase.monetarios)
+    const maxComp = Math.max(...numComp.monetarios)
+    const diff = maxComp - maxBase
+    const fmt = v => 'R$ ' + v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+    if (Math.abs(diff) < 0.01) {
+      return {
+        status: 'Igual',
+        resumo: `Valor idêntico em ambas as fontes: ${fmt(maxBase)}.`,
+      }
+    }
+    if (diff > 0) {
+      return {
+        status: 'Superior',
+        resumo: `A fonte comparada prevê ${fmt(maxComp)} contra ${fmt(maxBase)} da base — diferença de +${fmt(diff)} em favor da comparada.`,
+      }
+    }
+    return {
+      status: 'Inferior',
+      resumo: `A fonte comparada prevê ${fmt(maxComp)} contra ${fmt(maxBase)} da base — diferença de −${fmt(Math.abs(diff))} desfavorável à comparada.`,
+    }
+  }
+
+  // ── Comparação textual ──
+  const sim = similaridade(textoBase, textoComparado)
+  if (sim >= 0.95) {
+    return {
+      status: 'Igual',
+      resumo: 'Conteúdo praticamente idêntico nas duas fontes (sem diferenças relevantes detectadas).',
+    }
+  }
+  return {
+    status: 'Modificada',
+    resumo: `Redação diferente entre as fontes (similaridade textual: ${(sim * 100).toFixed(0)}%). Sem valores numéricos para determinar superioridade automaticamente — análise jurídica recomendada.`,
+  }
+}
+
+// ─── Detecção de mudança numérica (para compatibilidade com Comparativo) ─────
 function temMudancaNumerica(textoA, textoB) {
   const extrair = t => new Set(
     (t || '').replace(/[.,]/g, '').match(/\b\d{2,}\b/g) || []
@@ -41,13 +151,14 @@ function temMudancaNumerica(textoA, textoB) {
   return false
 }
 
-// Apenas INALTERADA ou ALTERADA — grau de modificação não importa
+// ─── Classificação para aba Comparativo (mantém compatibilidade) ──────────────
 export function classificarSimilaridade(score, textoA, textoB) {
   if (score >= 0.95 && !temMudancaNumerica(textoA, textoB))
     return { label: 'INALTERADA', cls: 'bg-emerald-100 text-emerald-800', order: 0 }
   return { label: 'ALTERADA', cls: 'bg-blue-100 text-blue-800', order: 1 }
 }
 
+// ─── Deduplicação ─────────────────────────────────────────────────────────────
 function deduplicar(clausulas) {
   const seen = new Set()
   return clausulas.filter(c => {
@@ -83,6 +194,7 @@ function matchGrupo(grupoA, grupoB, threshold) {
   return { matched, usedA, usedB }
 }
 
+// ─── Comparação principal (usada pelo Comparativo e pela Negociação) ──────────
 export function compararInstrumentos(clausulasA, clausulasB) {
   const dedupA = deduplicar(clausulasA)
   const dedupB = deduplicar(clausulasB)

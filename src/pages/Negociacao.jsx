@@ -1,44 +1,25 @@
 import { useState, useEffect, useCallback } from 'react'
 import { supabase } from '../services/supabase'
 import { useAuth } from '../hooks/useAuth'
-import { compararInstrumentos } from '../utils/comparacao'
-import { toNumeroOrdinal } from '../utils/ordenacao'
+import { compararInstrumentos, avaliarSuperioridade, STATUS_CONFIG } from '../utils/comparacao'
 import CheckList from '../components/UI/CheckList'
 import StepCard from '../components/UI/StepCard'
 import * as XLSX from 'xlsx'
 import jsPDF from 'jspdf'
 import 'jspdf-autotable'
 
-// ─── Constantes ───────────────────────────────────────────────────────────────
+// ─── Fontes disponíveis ────────────────────────────────────────────────────────
 const FONTES_CONFIG = {
-  pratica:   { label: 'Prática do Cliente',    cor: 'bg-amber-100 text-amber-800 border-amber-300',   icone: '🏢', descricao: 'Regras/condições praticadas internamente hoje' },
-  act:       { label: 'ACT',                   cor: 'bg-blue-100 text-blue-800 border-blue-300',       icone: '📋', descricao: 'Acordo Coletivo de Trabalho vigente com sindicato local' },
-  cct:       { label: 'CCT',                   cor: 'bg-purple-100 text-purple-800 border-purple-300', icone: '📄', descricao: 'Convenção Coletiva de Trabalho da categoria' },
-  proposta:  { label: 'Proposta Sindical',     cor: 'bg-rose-100 text-rose-800 border-rose-300',       icone: '✋', descricao: 'Proposta apresentada pelo sindicato na negociação' },
+  pratica:  { label: 'Prática do Cliente',  icone: '🏢', cor: 'bg-amber-100 text-amber-800 border-amber-300',   tipoInstrumento: 'Prática Interna' },
+  act:      { label: 'ACT',                  icone: '📋', cor: 'bg-blue-100 text-blue-800 border-blue-300',       tipoInstrumento: null },
+  cct:      { label: 'CCT',                  icone: '📄', cor: 'bg-purple-100 text-purple-800 border-purple-300', tipoInstrumento: null },
+  proposta: { label: 'Proposta Sindical',    icone: '✋', cor: 'bg-rose-100 text-rose-800 border-rose-300',       tipoInstrumento: 'Proposta Sindical' },
 }
 
-const STATUS_ORDER = ['INALTERADA', 'ALTERADA', 'SUPRIMIDA', 'NOVA']
-const STATUS_CLS = {
-  INALTERADA: 'bg-emerald-100 text-emerald-800 border-emerald-200',
-  ALTERADA:   'bg-blue-100 text-blue-800 border-blue-200',
-  SUPRIMIDA:  'bg-slate-100 text-slate-600 border-slate-200',
-  NOVA:       'bg-purple-100 text-purple-800 border-purple-200',
-}
+// Fontes que usam instrumento cadastrado (ACT, CCT — e também Prática/Proposta se cadastradas)
+const FONTES_COM_INSTRUMENTO = ['pratica', 'act', 'cct', 'proposta']
 
-const NIVEL_CLS = {
-  superior:  'bg-emerald-100 text-emerald-800',
-  inferior:  'bg-red-100 text-red-700',
-  igual:     'bg-slate-100 text-slate-600',
-  sem_base:  'bg-slate-50 text-slate-400',
-}
-const NIVEL_LABEL = {
-  superior: '▲ Superior',
-  inferior: '▼ Inferior',
-  igual:    '= Igual',
-  sem_base: '— N/A',
-}
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// ─── Diff palavra por palavra (igual ao Comparativo) ─────────────────────────
 function diffTexto(textoA, textoB) {
   if (!textoA && !textoB) return { html_a: '', html_b: '' }
   if (!textoA) return { html_a: '', html_b: `<mark class="diff-add">${textoB}</mark>` }
@@ -50,64 +31,31 @@ function diffTexto(textoA, textoB) {
     dp[i][j] = wA[i-1] === wB[j-1] ? dp[i-1][j-1] + 1 : Math.max(dp[i-1][j], dp[i][j-1])
   const ops = []; let i = m, j = n
   while (i > 0 || j > 0) {
-    if (i > 0 && j > 0 && wA[i-1] === wB[j-1]) { ops.unshift({ type: 'eq', val: wA[i-1] }); i--; j-- }
-    else if (j > 0 && (i === 0 || dp[i][j-1] >= dp[i-1][j])) { ops.unshift({ type: 'add', val: wB[j-1] }); j-- }
-    else { ops.unshift({ type: 'rem', val: wA[i-1] }); i-- }
+    if (i > 0 && j > 0 && wA[i-1] === wB[j-1]) { ops.unshift({ t: 'eq', v: wA[i-1] }); i--; j-- }
+    else if (j > 0 && (i === 0 || dp[i][j-1] >= dp[i-1][j])) { ops.unshift({ t: 'add', v: wB[j-1] }); j-- }
+    else { ops.unshift({ t: 'rem', v: wA[i-1] }); i-- }
   }
   let ha = '', hb = ''
   for (const op of ops) {
-    if (op.type === 'eq') { ha += op.val; hb += op.val }
-    else if (op.type === 'rem') ha += `<mark class="diff-rem">${op.val}</mark>`
-    else hb += `<mark class="diff-add">${op.val}</mark>`
+    if (op.t === 'eq') { ha += op.v; hb += op.v }
+    else if (op.t === 'rem') ha += `<mark class="diff-rem">${op.v}</mark>`
+    else hb += `<mark class="diff-add">${op.v}</mark>`
   }
   return { html_a: ha, html_b: hb }
 }
 
-function DiffText({ html }) {
-  return <span className="text-xs text-slate-600 leading-relaxed" dangerouslySetInnerHTML={{ __html: html }} />
+function DiffSpan({ html }) {
+  return <span className="text-xs leading-relaxed text-slate-700 whitespace-pre-wrap" dangerouslySetInnerHTML={{ __html: html }} />
 }
 
-// Detecta se um texto tem conteúdo melhor (numérico/percentual) que outro
-function avaliarSuperioridade(textoBase, textoAlvo) {
-  if (!textoBase && !textoAlvo) return 'sem_base'
-  if (!textoBase) return 'sem_base'
-  if (!textoAlvo) return 'sem_base'
-  if (textoBase.trim() === textoAlvo.trim()) return 'igual'
-  // Tenta extrair percentuais e valores monetários
-  const extrairNums = t => {
-    const matches = t.match(/(\d+[.,]\d+|\d+)%?/g) || []
-    return matches.map(n => parseFloat(n.replace(',', '.')))
-  }
-  const numsBase = extrairNums(textoBase).filter(n => !isNaN(n))
-  const numsAlvo = extrairNums(textoAlvo).filter(n => !isNaN(n))
-  if (numsBase.length > 0 && numsAlvo.length > 0) {
-    const maxBase = Math.max(...numsBase)
-    const maxAlvo = Math.max(...numsAlvo)
-    if (maxAlvo > maxBase) return 'superior'
-    if (maxAlvo < maxBase) return 'inferior'
-    return 'igual'
-  }
-  return 'sem_base'
-}
-
-// Cria cláusulas sintéticas a partir de texto livre (Prática / Proposta)
-function textoParaClausulas(textoDoc) {
-  if (!textoDoc || !textoDoc.trim()) return []
-  const linhas = textoDoc.split(/\n+/).map(l => l.trim()).filter(Boolean)
-  const clausulas = []
-  let num = 1
-  for (const linha of linhas) {
-    clausulas.push({
-      id: `synth-${num}`,
-      numero: String(num),
-      titulo: linha.length > 80 ? linha.slice(0, 80) + '…' : linha,
-      conteudo: linha,
-      categoria: null,
-      subcategoria: null,
-    })
-    num++
-  }
-  return clausulas
+// ─── Badge de status com cor ──────────────────────────────────────────────────
+function StatusBadge({ status }) {
+  const cfg = STATUS_CONFIG[status] || STATUS_CONFIG['Modificada']
+  return (
+    <span className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-semibold border ${cfg.cls}`}>
+      {cfg.icone} {status}
+    </span>
+  )
 }
 
 // ─── Componente principal ─────────────────────────────────────────────────────
@@ -126,28 +74,25 @@ export default function Negociacao() {
   const [sels, setSels] = useState({ empresas: [], operacoes: [], sindicatosLab: [], sindicatosPat: [] })
   const [buscas, setBuscas] = useState({ emp: '', op: '', sindLab: '', sindPat: '' })
 
-  // Fontes selecionadas e documentos
+  // Fontes
   const [fontesAtivas, setFontesAtivas] = useState(new Set(['act', 'cct']))
   const [instSelecionado, setInstSelecionado] = useState({ pratica: '', act: '', cct: '', proposta: '' })
-  const [textoDoc, setTextoDoc] = useState({ pratica: '', proposta: '' })
   const [clausulasCache, setClausulasCache] = useState({})
 
-  // Resultado e controles de exibição
+  // Resultado
   const [resultado, setResultado] = useState(null)
   const [loading, setLoading] = useState(false)
   const [erro, setErro] = useState('')
 
   // Controles da tabela
   const [fonteBase, setFonteBase] = useState('')
-  const [fontesComparadas, setFontesComparadas] = useState([])
   const [busca, setBusca] = useState('')
-  const [statusAtivos, setStatusAtivos] = useState(new Set(STATUS_ORDER))
+  const [statusAtivos, setStatusAtivos] = useState(new Set(Object.keys(STATUS_CONFIG)))
   const [mostrarDiff, setMostrarDiff] = useState(true)
   const [ordenacao, setOrdenacao] = useState('original')
   const [expandidos, setExpandidos] = useState(new Set())
   const [modoExpandido, setModoExpandido] = useState(false)
   const [selecionados, setSelecionados] = useState(new Set())
-  const [filtroNivel, setFiltroNivel] = useState('todos') // todos | superior | inferior | igual
 
   useEffect(() => {
     if (!user) return
@@ -173,13 +118,9 @@ export default function Negociacao() {
   const patronal = sindicatos.filter(s => s.tipo === 'patronal')
 
   // Cascade de filtros
-  const instsPorEmpresa = sels.empresas.length > 0
-    ? todosInstrumentos.filter(i => sels.empresas.includes(i.empresa_id))
-    : todosInstrumentos
+  const instsPorEmpresa = sels.empresas.length > 0 ? todosInstrumentos.filter(i => sels.empresas.includes(i.empresa_id)) : todosInstrumentos
   const opcoesOp = operacoes.filter(o => instsPorEmpresa.some(i => i.operacao_id === o.id))
-  const instsPorOp = sels.operacoes.length > 0
-    ? instsPorEmpresa.filter(i => sels.operacoes.includes(i.operacao_id))
-    : instsPorEmpresa
+  const instsPorOp = sels.operacoes.length > 0 ? instsPorEmpresa.filter(i => sels.operacoes.includes(i.operacao_id)) : instsPorEmpresa
   const opcoesLab = laboral.filter(s => instsPorOp.some(i => i.sindicato_laboral_id === s.id))
   const opcoesPat = patronal.filter(s => instsPorOp.some(i => i.sindicato_patronal_id === s.id))
   const instsPorSind = (() => {
@@ -191,35 +132,32 @@ export default function Negociacao() {
 
   function instLabel(i) {
     const emp = empMap[i.empresa_id]
-    return `${i.tipo} — ${i.nome}${emp ? ` · ${emp.razao_social}` : ''}`
+    return `${i.tipo} — ${i.nome}${emp ? ' · ' + emp.razao_social : ''}`
   }
 
   // Stepper
-  function confirmar(step, pularTodos = false) {
-    if (pularTodos) {
-      if (step === 1) setSels(prev => ({ ...prev, empresas: [] }))
-      if (step === 2) setSels(prev => ({ ...prev, operacoes: [] }))
-      if (step === 3) setSels(prev => ({ ...prev, sindicatosLab: [], sindicatosPat: [] }))
+  function confirmar(step, pular = false) {
+    if (pular) {
+      if (step === 1) setSels(p => ({ ...p, empresas: [] }))
+      if (step === 2) setSels(p => ({ ...p, operacoes: [] }))
+      if (step === 3) setSels(p => ({ ...p, sindicatosLab: [], sindicatosPat: [] }))
     }
-    const novos = new Set(confirmados)
-    novos.add(step)
-    for (let s = step + 1; s <= 3; s++) novos.delete(s)
-    setConfirmados(novos)
-    setStepAtivo(step + 1)
-    setResultado(null)
+    const n = new Set(confirmados); n.add(step)
+    for (let s = step + 1; s <= 3; s++) n.delete(s)
+    setConfirmados(n); setStepAtivo(step + 1); setResultado(null)
   }
 
   function editar(step) {
     setStepAtivo(step)
-    const novos = new Set(confirmados)
-    for (let s = step; s <= 3; s++) novos.delete(s)
-    setConfirmados(novos)
-    if (step <= 1) setSels(prev => ({ ...prev, operacoes: [], sindicatosLab: [], sindicatosPat: [] }))
-    else if (step === 2) setSels(prev => ({ ...prev, sindicatosLab: [], sindicatosPat: [] }))
+    const n = new Set(confirmados)
+    for (let s = step; s <= 3; s++) n.delete(s)
+    setConfirmados(n)
+    if (step <= 1) setSels(p => ({ ...p, operacoes: [], sindicatosLab: [], sindicatosPat: [] }))
+    else if (step === 2) setSels(p => ({ ...p, sindicatosLab: [], sindicatosPat: [] }))
     setResultado(null)
   }
 
-  function resumo(step) {
+  function resumoStep(step) {
     const label2 = (arr, map, fn) => {
       if (!arr.length) return null
       const nomes = arr.slice(0, 2).map(id => fn(map[id])).filter(Boolean)
@@ -237,16 +175,15 @@ export default function Negociacao() {
     }
   }
 
-  // Busca cláusulas de um instrumento (com cache)
   const buscarClausulas = useCallback(async (instId) => {
-    if (!instId || clausulasCache[instId]) return clausulasCache[instId] || []
+    if (!instId) return []
+    if (clausulasCache[instId]) return clausulasCache[instId]
     const { data } = await supabase.from('clausulas').select('*').eq('instrumento_id', instId).order('numero')
     const result = data || []
     setClausulasCache(prev => ({ ...prev, [instId]: result }))
     return result
   }, [clausulasCache])
 
-  // Toggle fontes ativas
   function toggleFonte(fonte) {
     setFontesAtivas(prev => {
       const n = new Set(prev)
@@ -256,140 +193,110 @@ export default function Negociacao() {
     setResultado(null)
   }
 
-  // Fontes disponíveis para selecionar instrumento (cadastradas no sistema)
-  const fontesComInstrumento = ['act', 'cct']
-  // Fontes com texto livre
-  const fontesComTexto = ['pratica', 'proposta']
+  // Filtro de instrumentos por fonte
+  function instsParaFonte(chave) {
+    const cfg = FONTES_CONFIG[chave]
+    if (!cfg) return instsPorSind
+    if (chave === 'act') return instsPorSind.filter(i => i.tipo === 'ACT')
+    if (chave === 'cct') return instsPorSind.filter(i => i.tipo === 'CCT' || i.tipo === 'Aditivo' || i.tipo === 'Acordo Extrajudicial')
+    if (cfg.tipoInstrumento) return instsPorSind.filter(i => i.tipo === cfg.tipoInstrumento)
+    return instsPorSind
+  }
 
-  // Gera o comparativo multi-fonte
   async function comparar() {
     const fontesLista = [...fontesAtivas]
     if (fontesLista.length < 2) return setErro('Selecione ao menos 2 fontes para comparar.')
-
-    // Valida que cada fonte ativa tem dados
     for (const f of fontesLista) {
-      if (fontesComTexto.includes(f) && !textoDoc[f]?.trim()) {
-        return setErro(`A fonte "${FONTES_CONFIG[f].label}" está ativa mas sem conteúdo. Insira o texto ou desative a fonte.`)
-      }
-      if (fontesComInstrumento.includes(f) && !instSelecionado[f]) {
-        return setErro(`Selecione o instrumento para "${FONTES_CONFIG[f].label}" ou desative a fonte.`)
-      }
+      if (!instSelecionado[f]) return setErro(`Selecione o instrumento para "${FONTES_CONFIG[f].label}" ou desative a fonte.`)
     }
-
     setLoading(true); setErro(''); setResultado(null)
     setExpandidos(new Set()); setModoExpandido(false); setSelecionados(new Set())
-
     try {
-      // Carrega cláusulas de cada fonte
       const clausulasPorFonte = {}
       for (const f of fontesLista) {
-        if (fontesComTexto.includes(f)) {
-          clausulasPorFonte[f] = textoParaClausulas(textoDoc[f])
-        } else {
-          clausulasPorFonte[f] = await buscarClausulas(instSelecionado[f])
-        }
+        clausulasPorFonte[f] = await buscarClausulas(instSelecionado[f])
       }
-
-      // Define base e comparados (base = primeiro da lista por padrão, ou fonteBase escolhida)
       const baseEfetiva = fontesLista.includes(fonteBase) ? fonteBase : fontesLista[0]
       const comparadas = fontesLista.filter(f => f !== baseEfetiva)
-
       setFonteBase(baseEfetiva)
-      setFontesComparadas(comparadas)
-
-      // Para cada par (base × comparada), calcula comparativo
       const comparativos = {}
       for (const fc of comparadas) {
         comparativos[fc] = compararInstrumentos(clausulasPorFonte[baseEfetiva], clausulasPorFonte[fc])
       }
-
       setResultado({ clausulasPorFonte, comparativos, baseEfetiva, comparadas, fontesLista })
-      setStatusAtivos(new Set(STATUS_ORDER))
+      setStatusAtivos(new Set(Object.keys(STATUS_CONFIG)))
     } catch (e) {
       setErro('Erro ao comparar: ' + e.message)
     }
     setLoading(false)
   }
 
-  // Linhas mescladas do resultado (baseado nos itens da fonte base)
+  // ─── Monta as linhas do comparativo ──────────────────────────────────────────
   const linhasResultado = (() => {
     if (!resultado) return []
     const { clausulasPorFonte, comparativos, baseEfetiva, comparadas } = resultado
     const clausulasBase = clausulasPorFonte[baseEfetiva] || []
 
-    // Para cada cláusula da base, encontra correspondência em cada comparada
-    return clausulasBase.map((cb, idx) => {
+    const linhas = clausulasBase.map((cb, idx) => {
       const pares = {}
-      let statusGeral = 'INALTERADA'
-
+      const avaliacoes = {}
       for (const fc of comparadas) {
         const comp = comparativos[fc] || []
-        // Encontra o par que tem clausulaA correspondente a cb
         const par = comp.find(r => r.clausulaA?.id === cb.id)
         pares[fc] = par || null
-        if (par) {
-          if (par.status.label === 'ALTERADA') statusGeral = 'ALTERADA'
-          else if (par.status.label === 'SUPRIMIDA' && statusGeral !== 'ALTERADA') statusGeral = 'SUPRIMIDA'
-        } else {
-          statusGeral = 'SUPRIMIDA'
-        }
+        avaliacoes[fc] = avaliarSuperioridade(cb.conteudo, par?.clausulaB?.conteudo, cb.titulo)
       }
-
-      return { clausulaBase: cb, pares, statusGeral, idx }
+      // Status geral da linha: pior status entre todas as comparadas
+      const statusOrder = ['Exclusiva', 'Inferior', 'Superior', 'Modificada', 'Igual']
+      let statusGeral = 'Igual'
+      for (const fc of comparadas) {
+        const s = avaliacoes[fc].status
+        if (statusOrder.indexOf(s) < statusOrder.indexOf(statusGeral)) statusGeral = s
+      }
+      return { clausulaBase: cb, pares, avaliacoes, statusGeral, idx }
     })
-  })()
 
-  // Cláusulas novas em comparadas (não existem na base)
-  const novasNasComparadas = (() => {
-    if (!resultado) return []
-    const { comparativos, comparadas } = resultado
+    // Cláusulas exclusivas da comparada (não existem na base)
     const novas = []
     for (const fc of comparadas) {
       const comp = comparativos[fc] || []
       comp.filter(r => r.status.label === 'NOVA').forEach(r => {
-        novas.push({ clausulaBase: null, fonte: fc, clausulaNova: r.clausulaB, statusGeral: 'NOVA', pares: {} })
+        novas.push({
+          clausulaBase: null,
+          pares: { [fc]: r },
+          avaliacoes: { [fc]: { status: 'Exclusiva', resumo: `Cláusula exclusiva da fonte ${FONTES_CONFIG[fc]?.label} — não existe na base.` } },
+          statusGeral: 'Exclusiva',
+          fontaExclusiva: fc,
+          clausulaNova: r.clausulaB,
+          idx: linhas.length + novas.length,
+        })
       })
     }
-    return novas
+    return [...linhas, ...novas]
   })()
-
-  const todasLinhas = [...linhasResultado, ...novasNasComparadas]
 
   // Filtro e ordenação
-  function sortKey(r) {
-    return toNumeroOrdinal(r.clausulaBase?.numero || r.clausulaNova?.numero || String(r.idx || 0))
-  }
-
-  const linhasOrdenadas = (() => {
-    const arr = [...todasLinhas]
-    switch (ordenacao) {
-      case 'num_asc':  return arr.sort((a, b) => sortKey(a) - sortKey(b))
-      case 'num_desc': return arr.sort((a, b) => sortKey(b) - sortKey(a))
-      case 'status':   return arr.sort((a, b) => STATUS_ORDER.indexOf(a.statusGeral) - STATUS_ORDER.indexOf(b.statusGeral))
-      default: return arr
-    }
-  })()
-
-  const filtrado = linhasOrdenadas.filter(r => {
+  const filtrado = linhasResultado.filter(r => {
     if (!statusAtivos.has(r.statusGeral)) return false
     const q = busca.toLowerCase()
     if (q) {
       const titulo = r.clausulaBase?.titulo || r.clausulaNova?.titulo || ''
       if (!titulo.toLowerCase().includes(q)) return false
     }
-    if (filtroNivel !== 'todos' && resultado) {
-      // Verifica se alguma comparação tem esse nível
-      const temNivel = Object.entries(r.pares).some(([fc, par]) => {
-        if (!par) return false
-        const nivel = avaliarSuperioridade(r.clausulaBase?.conteudo, par.clausulaB?.conteudo)
-        return nivel === filtroNivel
-      })
-      if (!temNivel) return false
-    }
     return true
   })
 
-  const statsStatus = todasLinhas.reduce((acc, r) => { acc[r.statusGeral] = (acc[r.statusGeral] || 0) + 1; return acc }, {})
+  const filtradoOrdenado = (() => {
+    const arr = [...filtrado]
+    const ord = Object.keys(STATUS_CONFIG)
+    switch (ordenacao) {
+      case 'status': return arr.sort((a, b) => ord.indexOf(a.statusGeral) - ord.indexOf(b.statusGeral))
+      case 'status_desc': return arr.sort((a, b) => ord.indexOf(b.statusGeral) - ord.indexOf(a.statusGeral))
+      default: return arr
+    }
+  })()
+
+  const statsStatus = linhasResultado.reduce((acc, r) => { acc[r.statusGeral] = (acc[r.statusGeral] || 0) + 1; return acc }, {})
 
   function toggleStatus(s) {
     setStatusAtivos(prev => {
@@ -403,67 +310,148 @@ export default function Negociacao() {
   function toggleExpandAll() { setModoExpandido(v => !v); setExpandidos(new Set()) }
   const isExpanded = idx => modoExpandido ? !expandidos.has(idx) : expandidos.has(idx)
   function toggleSel(idx) { setSelecionados(prev => { const n = new Set(prev); n.has(idx) ? n.delete(idx) : n.add(idx); return n }) }
-  const todosSel = filtrado.length > 0 && filtrado.every((_, i) => selecionados.has(i))
-  function toggleSelTodos() { todosSel ? setSelecionados(new Set()) : setSelecionados(new Set(filtrado.map((_, i) => i))) }
+  const todosSel = filtradoOrdenado.length > 0 && filtradoOrdenado.every((_, i) => selecionados.has(i))
+  function toggleSelTodos() { todosSel ? setSelecionados(new Set()) : setSelecionados(new Set(filtradoOrdenado.map((_, i) => i))) }
 
-  // ─── Exportação ────────────────────────────────────────────────────────────
+  // ─── Exportações ─────────────────────────────────────────────────────────────
   function exportarExcel() {
     if (!resultado) return
-    const itens = selecionados.size > 0 ? filtrado.filter((_, i) => selecionados.has(i)) : filtrado
-    const wb = XLSX.utils.book_new()
+    const itens = selecionados.size > 0 ? filtradoOrdenado.filter((_, i) => selecionados.has(i)) : filtradoOrdenado
     const { comparadas, baseEfetiva } = resultado
     const fBase = FONTES_CONFIG[baseEfetiva]?.label || baseEfetiva
-
+    const wb = XLSX.utils.book_new()
     const rows = itens.map(r => {
       const row = {
-        'Status': r.statusGeral,
+        'Status Geral': r.statusGeral,
         [`Nº (${fBase})`]: r.clausulaBase?.numero || '',
         [`Título (${fBase})`]: r.clausulaBase?.titulo || r.clausulaNova?.titulo || '',
         [`Conteúdo (${fBase})`]: r.clausulaBase?.conteudo || '',
       }
       for (const fc of comparadas) {
         const par = r.pares[fc]
+        const av = r.avaliacoes?.[fc] || {}
         const fl = FONTES_CONFIG[fc]?.label || fc
-        row[`Nº (${fl})`] = par?.clausulaB?.numero || ''
         row[`Conteúdo (${fl})`] = par?.clausulaB?.conteudo || ''
-        row[`Nível vs ${fl}`] = NIVEL_LABEL[avaliarSuperioridade(r.clausulaBase?.conteudo, par?.clausulaB?.conteudo)] || '—'
+        row[`Resultado vs ${fl}`] = av.status || '—'
+        row[`Resumo vs ${fl}`] = av.resumo || ''
       }
       return row
     })
-
     const ws = XLSX.utils.json_to_sheet(rows)
+    // Larguras automáticas
+    ws['!cols'] = Object.keys(rows[0] || {}).map(() => ({ wch: 40 }))
     XLSX.utils.book_append_sheet(wb, ws, 'Negociação')
     XLSX.writeFile(wb, 'negociacao_sindical_' + new Date().toISOString().slice(0, 10) + '.xlsx')
   }
 
   function exportarPDF() {
     if (!resultado) return
-    const itens = selecionados.size > 0 ? filtrado.filter((_, i) => selecionados.has(i)) : filtrado
+    const itens = selecionados.size > 0 ? filtradoOrdenado.filter((_, i) => selecionados.has(i)) : filtradoOrdenado
     const { comparadas, baseEfetiva } = resultado
     const fBase = FONTES_CONFIG[baseEfetiva]?.label || baseEfetiva
-    const doc = new jsPDF({ orientation: 'landscape' })
-    doc.setFontSize(13); doc.text('Negociação Sindical — Comparativo de Fontes', 14, 16)
-    doc.setFontSize(8); doc.setTextColor(100)
+    const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' })
+
+    const STATUS_COLOR = {
+      Superior:   [220, 252, 231],
+      Inferior:   [254, 226, 226],
+      Igual:      [241, 245, 249],
+      Modificada: [219, 234, 254],
+      Exclusiva:  [243, 232, 255],
+    }
+
+    doc.setFontSize(14); doc.setFont('helvetica', 'bold')
+    doc.text('Negociação Sindical — Comparativo de Fontes', 14, 16)
+    doc.setFontSize(9); doc.setFont('helvetica', 'normal'); doc.setTextColor(100)
     doc.text(`Base: ${fBase}  ·  Comparadas: ${comparadas.map(f => FONTES_CONFIG[f]?.label).join(', ')}`, 14, 22)
+    doc.text(`Gerado em: ${new Date().toLocaleString('pt-BR')}  ·  Total: ${itens.length} cláusulas`, 14, 27)
     doc.setTextColor(0)
-    const head = [['Status', `Nº (${fBase})`, `Título (${fBase})`, ...comparadas.flatMap(fc => [`${FONTES_CONFIG[fc]?.label}`, `Nível`])]]
-    const body = itens.map(r => [
-      r.statusGeral,
-      r.clausulaBase?.numero || '',
-      (r.clausulaBase?.titulo || r.clausulaNova?.titulo || '').slice(0, 50),
-      ...comparadas.flatMap(fc => {
-        const par = r.pares[fc]
-        return [
-          (par?.clausulaB?.conteudo || '').slice(0, 120),
-          NIVEL_LABEL[avaliarSuperioridade(r.clausulaBase?.conteudo, par?.clausulaB?.conteudo)] || '—',
-        ]
-      }),
-    ])
-    doc.autoTable({ startY: 28, head, body, styles: { fontSize: 6 }, headStyles: { fillColor: [79, 70, 229] } })
+
+    let y = 33
+    const pageW = doc.internal.pageSize.getWidth()
+    const margin = 14
+    const usableW = pageW - margin * 2
+
+    for (const r of itens) {
+      const titulo = r.clausulaBase?.titulo || r.clausulaNova?.titulo || '—'
+      const numClausula = r.clausulaBase?.numero || '—'
+      const cor = STATUS_COLOR[r.statusGeral] || [255, 255, 255]
+
+      // Verifica se precisa de nova página (estimativa conservadora)
+      if (y > 175) { doc.addPage(); y = 14 }
+
+      // Cabeçalho da cláusula
+      doc.setFillColor(...cor)
+      doc.roundedRect(margin, y, usableW, 8, 2, 2, 'F')
+      doc.setFontSize(9); doc.setFont('helvetica', 'bold')
+      doc.text(`${numClausula} — ${titulo}`, margin + 2, y + 5.5)
+      doc.setFontSize(8); doc.setFont('helvetica', 'normal'); doc.setTextColor(80)
+      doc.text(r.statusGeral, pageW - margin - 2, y + 5.5, { align: 'right' })
+      doc.setTextColor(0)
+      y += 10
+
+      // Colunas: base + cada comparada
+      const colW = usableW / (1 + comparadas.length)
+
+      // Coluna base
+      const conteudoBase = r.clausulaBase?.conteudo || 'Cláusula exclusiva da fonte comparada'
+      doc.setFontSize(7); doc.setFont('helvetica', 'bold')
+      doc.text(`${FONTES_CONFIG[baseEfetiva]?.icone || ''} ${fBase} (BASE)`, margin + 1, y + 4)
+      doc.setFont('helvetica', 'normal')
+      const linhasBase = doc.splitTextToSize(conteudoBase.slice(0, 600), colW - 4)
+      doc.text(linhasBase.slice(0, 12), margin + 1, y + 8)
+      const altBase = Math.min(linhasBase.length, 12) * 3.5 + 10
+
+      // Colunas comparadas
+      let altMax = altBase
+      for (let ci = 0; ci < comparadas.length; ci++) {
+        const fc = comparadas[ci]
+        const xCol = margin + colW * (ci + 1)
+        const av = r.avaliacoes?.[fc] || {}
+        const par = r.pares?.[fc]
+        const conteudoComp = par?.clausulaB?.conteudo || 'Não encontrado nesta fonte'
+        const cfgFonte = FONTES_CONFIG[fc]
+        const cfgStatus = STATUS_CONFIG[av.status] || {}
+
+        doc.setFontSize(7); doc.setFont('helvetica', 'bold')
+        doc.text(`${cfgFonte?.icone || ''} ${cfgFonte?.label || fc}`, xCol + 1, y + 4)
+
+        // Badge de resultado
+        doc.setFont('helvetica', 'bold')
+        doc.setTextColor(...(av.status === 'Superior' ? [22, 101, 52] : av.status === 'Inferior' ? [185, 28, 28] : [71, 85, 105]))
+        doc.text(`${cfgStatus.icone || ''} ${av.status || '—'}`, xCol + colW - 2, y + 4, { align: 'right' })
+        doc.setTextColor(0)
+
+        // Resumo explicativo
+        if (av.resumo) {
+          doc.setFont('helvetica', 'italic'); doc.setFontSize(6); doc.setTextColor(80)
+          const resumoLinhas = doc.splitTextToSize(av.resumo, colW - 4)
+          doc.text(resumoLinhas.slice(0, 3), xCol + 1, y + 8)
+          doc.setTextColor(0)
+        }
+
+        // Conteúdo
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(7)
+        const linhasComp = doc.splitTextToSize(conteudoComp.slice(0, 500), colW - 4)
+        doc.text(linhasComp.slice(0, 10), xCol + 1, y + 14)
+        altMax = Math.max(altMax, Math.min(linhasComp.length, 10) * 3.5 + 16)
+      }
+
+      // Borda da cláusula
+      doc.setDrawColor(220, 220, 220)
+      doc.roundedRect(margin, y, usableW, altMax, 1, 1)
+      // Linhas verticais separando colunas
+      for (let ci = 1; ci <= comparadas.length; ci++) {
+        const xLine = margin + colW * ci
+        doc.line(xLine, y, xLine, y + altMax)
+      }
+
+      y += altMax + 4
+    }
+
     doc.save('negociacao_' + new Date().toISOString().slice(0, 10) + '.pdf')
   }
 
-  // ─── Renderização ──────────────────────────────────────────────────────────
+  // ─── Render ───────────────────────────────────────────────────────────────────
   return (
     <div className="pb-24">
       <style>{`
@@ -473,237 +461,134 @@ export default function Negociacao() {
 
       <div className="mb-6">
         <h1 className="font-display font-bold text-2xl text-slate-800">🤝 Negociação Sindical</h1>
-        <p className="text-slate-500 text-sm mt-1">
-          Compare a prática do cliente, ACTs, CCTs e propostas sindicais — identifique divergências e avalie superioridade cláusula a cláusula
-        </p>
+        <p className="text-slate-500 text-sm mt-1">Compare ACTs, CCTs, prática interna e propostas sindicais — avalie superioridade cláusula a cláusula</p>
       </div>
 
-      {/* ── Passo 1-3: Filtros de contexto ── */}
-      <StepCard number="1" title="Empresa"
-        subtitle="Filtre os instrumentos por empresa"
-        active={stepAtivo === 1} done={confirmados.has(1)} locked={false}
-        summary={resumo(1)} onEdit={() => editar(1)}
-        onConfirm={() => confirmar(1)} onSkip={() => confirmar(1, true)}>
-        <CheckList
-          opcoes={empresas.map(e => ({ value: e.id, label: e.razao_social, cnpj: e.cnpj || '' }))}
-          selecionados={sels.empresas}
-          onChange={v => setSels(prev => ({ ...prev, empresas: v }))}
-          busca={buscas.emp} onBusca={v => setBuscas(b => ({ ...b, emp: v }))} />
+      {/* ── Passos de filtro ── */}
+      <StepCard number="1" title="Empresa" subtitle="Filtre por empresa" active={stepAtivo === 1} done={confirmados.has(1)} locked={false} summary={resumoStep(1)} onEdit={() => editar(1)} onConfirm={() => confirmar(1)} onSkip={() => confirmar(1, true)}>
+        <CheckList opcoes={empresas.map(e => ({ value: e.id, label: e.razao_social, cnpj: e.cnpj || '' }))} selecionados={sels.empresas} onChange={v => setSels(p => ({ ...p, empresas: v }))} busca={buscas.emp} onBusca={v => setBuscas(b => ({ ...b, emp: v }))} />
       </StepCard>
-
-      <StepCard number="2" title="Operação"
-        subtitle={opcoesOp.length + ' operação(ões) disponível(is)'}
-        active={stepAtivo === 2} done={confirmados.has(2)} locked={stepAtivo < 2 && !confirmados.has(1)}
-        summary={resumo(2)} onEdit={() => editar(2)}
-        onConfirm={() => confirmar(2)} onSkip={() => confirmar(2, true)}>
-        <CheckList
-          opcoes={opcoesOp.map(o => ({ value: o.id, label: o.nome + (o.codigo ? ' (' + o.codigo + ')' : '') }))}
-          selecionados={sels.operacoes}
-          onChange={v => setSels(prev => ({ ...prev, operacoes: v }))}
-          busca={buscas.op} onBusca={v => setBuscas(b => ({ ...b, op: v }))} />
+      <StepCard number="2" title="Operação" subtitle={opcoesOp.length + ' operação(ões)'} active={stepAtivo === 2} done={confirmados.has(2)} locked={stepAtivo < 2 && !confirmados.has(1)} summary={resumoStep(2)} onEdit={() => editar(2)} onConfirm={() => confirmar(2)} onSkip={() => confirmar(2, true)}>
+        <CheckList opcoes={opcoesOp.map(o => ({ value: o.id, label: o.nome + (o.codigo ? ` (${o.codigo})` : '') }))} selecionados={sels.operacoes} onChange={v => setSels(p => ({ ...p, operacoes: v }))} busca={buscas.op} onBusca={v => setBuscas(b => ({ ...b, op: v }))} />
       </StepCard>
-
-      <StepCard number="3" title="Sindicatos"
-        subtitle="Laboral e patronal disponíveis"
-        active={stepAtivo === 3} done={confirmados.has(3)} locked={stepAtivo < 3 && !confirmados.has(2)}
-        summary={resumo(3)} onEdit={() => editar(3)}
-        onConfirm={() => confirmar(3)} onSkip={() => confirmar(3, true)}>
+      <StepCard number="3" title="Sindicatos" subtitle="Laboral e patronal" active={stepAtivo === 3} done={confirmados.has(3)} locked={stepAtivo < 3 && !confirmados.has(2)} summary={resumoStep(3)} onEdit={() => editar(3)} onConfirm={() => confirmar(3)} onSkip={() => confirmar(3, true)}>
         <div className="grid grid-cols-2 gap-4">
           <div>
             <p className="text-xs font-medium text-slate-600 mb-1.5">Sindicato Laboral</p>
-            <CheckList
-              opcoes={opcoesLab.map(s => ({ value: s.id, label: (s.sigla ? s.sigla + ' — ' : '') + s.razao_social, cnpj: s.cnpj || '' }))}
-              selecionados={sels.sindicatosLab}
-              onChange={v => setSels(prev => ({ ...prev, sindicatosLab: v }))}
-              busca={buscas.sindLab} onBusca={v => setBuscas(b => ({ ...b, sindLab: v }))} />
+            <CheckList opcoes={opcoesLab.map(s => ({ value: s.id, label: (s.sigla ? s.sigla + ' — ' : '') + s.razao_social }))} selecionados={sels.sindicatosLab} onChange={v => setSels(p => ({ ...p, sindicatosLab: v }))} busca={buscas.sindLab} onBusca={v => setBuscas(b => ({ ...b, sindLab: v }))} />
           </div>
           <div>
             <p className="text-xs font-medium text-slate-600 mb-1.5">Sindicato Patronal</p>
-            <CheckList
-              opcoes={opcoesPat.map(s => ({ value: s.id, label: (s.sigla ? s.sigla + ' — ' : '') + s.razao_social, cnpj: s.cnpj || '' }))}
-              selecionados={sels.sindicatosPat}
-              onChange={v => setSels(prev => ({ ...prev, sindicatosPat: v }))}
-              busca={buscas.sindPat} onBusca={v => setBuscas(b => ({ ...b, sindPat: v }))} />
+            <CheckList opcoes={opcoesPat.map(s => ({ value: s.id, label: (s.sigla ? s.sigla + ' — ' : '') + s.razao_social }))} selecionados={sels.sindicatosPat} onChange={v => setSels(p => ({ ...p, sindicatosPat: v }))} busca={buscas.sindPat} onBusca={v => setBuscas(b => ({ ...b, sindPat: v }))} />
           </div>
         </div>
       </StepCard>
 
-      {/* ── Configuração das fontes ── */}
+      {/* ── Configuração de fontes ── */}
       <div className="card p-5 mt-4">
-        <h2 className="font-display font-semibold text-slate-700 mb-1 text-sm">⚙️ Fontes para comparação</h2>
-        <p className="text-xs text-slate-400 mb-4">
-          Selecione quais fontes deseja comparar (mínimo 2). Para ACT e CCT, escolha o instrumento já cadastrado.
-          Para Prática do Cliente e Proposta Sindical, insira o conteúdo em texto livre.
-        </p>
+        <h2 className="font-semibold text-slate-700 text-sm mb-1">⚙️ Fontes para comparação</h2>
+        <p className="text-xs text-slate-400 mb-4">Selecione as fontes (mínimo 2) e o instrumento correspondente para cada uma. Prática Interna e Proposta Sindical devem estar cadastradas na aba Instrumentos.</p>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {Object.entries(FONTES_CONFIG).map(([chave, cfg]) => {
             const ativo = fontesAtivas.has(chave)
+            const opcoesInst = instsParaFonte(chave)
             return (
               <div key={chave} className={`rounded-xl border-2 p-4 transition-all ${ativo ? 'border-brand-400 bg-brand-50/30' : 'border-slate-200 bg-white opacity-60'}`}>
-                {/* Header da fonte */}
                 <div className="flex items-start justify-between mb-3">
                   <div className="flex items-center gap-2">
                     <span className="text-xl">{cfg.icone}</span>
                     <div>
                       <p className={`text-sm font-semibold ${ativo ? 'text-slate-800' : 'text-slate-500'}`}>{cfg.label}</p>
-                      <p className="text-xs text-slate-400">{cfg.descricao}</p>
+                      <p className="text-xs text-slate-400">{cfg.tipoInstrumento ? `Tipo: ${cfg.tipoInstrumento}` : 'Instrumento coletivo'}</p>
                     </div>
                   </div>
                   <label className="flex items-center gap-1.5 cursor-pointer select-none">
-                    <input type="checkbox" checked={ativo}
-                      onChange={() => toggleFonte(chave)}
-                      className="w-4 h-4 accent-brand-600" />
+                    <input type="checkbox" checked={ativo} onChange={() => toggleFonte(chave)} className="w-4 h-4 accent-brand-600" />
                     <span className="text-xs text-slate-500">{ativo ? 'Ativo' : 'Inativo'}</span>
                   </label>
                 </div>
-
-                {/* Controles específicos por tipo */}
                 {ativo && (
-                  <>
-                    {fontesComInstrumento.includes(chave) && (
-                      <div>
-                        <label className="label text-xs">Instrumento ({cfg.label})</label>
-                        <select className="input text-xs"
-                          value={instSelecionado[chave]}
-                          onChange={e => setInstSelecionado(prev => ({ ...prev, [chave]: e.target.value }))}>
-                          <option value="">Selecione um instrumento...</option>
-                          {instsPorSind
-                            .filter(i => chave === 'act' ? i.tipo === 'ACT' : i.tipo === 'CCT' || i.tipo !== 'ACT')
-                            .map(i => (
-                              <option key={i.id} value={i.id}>{instLabel(i)}</option>
-                            ))}
-                        </select>
-                        {instSelecionado[chave] && (() => {
-                          const inst = todosInstrumentos.find(i => i.id === instSelecionado[chave])
-                          return inst ? <p className="text-xs text-slate-400 mt-1">Vigência: {inst.vigencia_inicio} a {inst.vigencia_fim}</p> : null
-                        })()}
-                      </div>
+                  <div>
+                    <label className="label text-xs">Instrumento</label>
+                    <select className="input text-xs" value={instSelecionado[chave]} onChange={e => setInstSelecionado(p => ({ ...p, [chave]: e.target.value }))}>
+                      <option value="">Selecione...</option>
+                      {opcoesInst.map(i => <option key={i.id} value={i.id}>{instLabel(i)}</option>)}
+                    </select>
+                    {opcoesInst.length === 0 && (
+                      <p className="text-xs text-amber-600 mt-1">⚠️ Nenhum instrumento do tipo "{cfg.tipoInstrumento || (chave === 'act' ? 'ACT' : 'CCT')}" encontrado. Cadastre na aba Instrumentos.</p>
                     )}
-
-                    {fontesComTexto.includes(chave) && (
-                      <div>
-                        <label className="label text-xs">
-                          {chave === 'pratica' ? 'Condições praticadas hoje' : 'Proposta do sindicato'}
-                          <span className="font-normal text-slate-400 ml-1">(uma condição por linha)</span>
-                        </label>
-                        <textarea
-                          className="input text-xs resize-y"
-                          rows={5}
-                          placeholder={chave === 'pratica'
-                            ? 'Ex:\nReajuste anual de 3%\nVale-alimentação R$ 25,00/dia\nJornada 44h semanais\n...'
-                            : 'Ex:\nReajuste de 6,5%\nAumento do vale-refeição para R$ 35,00\nRedução da jornada para 40h\n...'}
-                          value={textoDoc[chave]}
-                          onChange={e => setTextoDoc(prev => ({ ...prev, [chave]: e.target.value }))}
-                        />
-                        <p className="text-xs text-slate-400 mt-0.5">
-                          {textoDoc[chave].split('\n').filter(l => l.trim()).length} item(ns)
-                        </p>
-                      </div>
-                    )}
-                  </>
+                    {instSelecionado[chave] && (() => {
+                      const inst = todosInstrumentos.find(i => i.id === instSelecionado[chave])
+                      return inst ? <p className="text-xs text-slate-400 mt-1">Vigência: {inst.vigencia_inicio} a {inst.vigencia_fim}</p> : null
+                    })()}
+                  </div>
                 )}
               </div>
             )
           })}
         </div>
 
-        {/* Seleção da fonte-base */}
         {fontesAtivas.size >= 2 && (
-          <div className="mt-4 pt-4 border-t border-slate-100">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-end">
-              <div>
-                <label className="label text-xs">📌 Fonte-base para comparação</label>
-                <select className="input text-xs"
-                  value={fonteBase}
-                  onChange={e => setFonteBase(e.target.value)}>
-                  <option value="">Automática (primeira fonte ativa)</option>
-                  {[...fontesAtivas].map(f => (
-                    <option key={f} value={f}>{FONTES_CONFIG[f]?.icone} {FONTES_CONFIG[f]?.label}</option>
-                  ))}
-                </select>
-                <p className="text-xs text-slate-400 mt-0.5">
-                  As demais fontes serão comparadas contra a fonte-base
-                </p>
-              </div>
-              <button
-                className="btn-primary w-full"
-                onClick={comparar}
-                disabled={loading}>
-                {loading ? '⏳ Comparando...' : '⚖️ Gerar comparativo'}
-              </button>
+          <div className="mt-4 pt-4 border-t border-slate-100 grid grid-cols-1 md:grid-cols-2 gap-4 items-end">
+            <div>
+              <label className="label text-xs">📌 Fonte-base para comparação</label>
+              <select className="input text-xs" value={fonteBase} onChange={e => setFonteBase(e.target.value)}>
+                <option value="">Automática (primeira fonte ativa)</option>
+                {[...fontesAtivas].map(f => <option key={f} value={f}>{FONTES_CONFIG[f]?.icone} {FONTES_CONFIG[f]?.label}</option>)}
+              </select>
+              <p className="text-xs text-slate-400 mt-0.5">As demais fontes serão avaliadas em relação à base</p>
             </div>
+            <button className="btn-primary w-full" onClick={comparar} disabled={loading}>
+              {loading ? '⏳ Comparando...' : '⚖️ Gerar comparativo'}
+            </button>
           </div>
         )}
-
-        {erro && (
-          <div className="mt-3 bg-red-50 border border-red-200 rounded-lg px-4 py-2">
-            <p className="text-xs text-red-700">⚠️ {erro}</p>
-          </div>
-        )}
+        {erro && <div className="mt-3 bg-red-50 border border-red-200 rounded-lg px-4 py-2"><p className="text-xs text-red-700">⚠️ {erro}</p></div>}
       </div>
 
       {/* ── Resultado ── */}
       {resultado && (
         <div className="mt-4">
-          {/* Cabeçalho do resultado */}
-          <div className="card p-4 mb-4">
-            <div className="flex items-center justify-between flex-wrap gap-2">
-              <div>
-                <p className="text-sm font-semibold text-slate-700">
-                  📊 Comparativo gerado — base:&nbsp;
-                  <span className={`text-xs px-2 py-0.5 rounded-full border ${FONTES_CONFIG[resultado.baseEfetiva]?.cor}`}>
-                    {FONTES_CONFIG[resultado.baseEfetiva]?.icone} {FONTES_CONFIG[resultado.baseEfetiva]?.label}
-                  </span>
-                </p>
-                <p className="text-xs text-slate-400 mt-0.5">
-                  Comparadas:{' '}
-                  {resultado.comparadas.map(fc => (
-                    <span key={fc} className={`text-xs px-1.5 py-0.5 rounded-full border mr-1 ${FONTES_CONFIG[fc]?.cor}`}>
-                      {FONTES_CONFIG[fc]?.icone} {FONTES_CONFIG[fc]?.label}
-                    </span>
-                  ))}
-                </p>
-              </div>
-              <div className="flex gap-2 flex-wrap">
-                <button onClick={exportarExcel} className="btn-secondary text-xs py-1">
-                  📊 {selecionados.size > 0 ? `Excel (${selecionados.size})` : 'Excel'}
-                </button>
-                <button onClick={exportarPDF} className="btn-secondary text-xs py-1">
-                  📄 {selecionados.size > 0 ? `PDF (${selecionados.size})` : 'PDF'}
-                </button>
-              </div>
+          {/* Cabeçalho */}
+          <div className="card p-4 mb-4 flex items-center justify-between flex-wrap gap-3">
+            <div>
+              <p className="text-sm font-semibold text-slate-700">
+                📊 Comparativo — base:&nbsp;
+                <span className={`text-xs px-2 py-0.5 rounded-full border ${FONTES_CONFIG[resultado.baseEfetiva]?.cor}`}>
+                  {FONTES_CONFIG[resultado.baseEfetiva]?.icone} {FONTES_CONFIG[resultado.baseEfetiva]?.label}
+                </span>
+              </p>
+              <p className="text-xs text-slate-400 mt-0.5">
+                Comparadas: {resultado.comparadas.map(fc => (
+                  <span key={fc} className={`text-xs px-1.5 py-0.5 rounded-full border mr-1 ${FONTES_CONFIG[fc]?.cor}`}>{FONTES_CONFIG[fc]?.icone} {FONTES_CONFIG[fc]?.label}</span>
+                ))}
+              </p>
+            </div>
+            <div className="flex gap-2">
+              <button onClick={exportarExcel} className="btn-secondary text-xs py-1">📊 {selecionados.size > 0 ? `Excel (${selecionados.size})` : 'Excel'}</button>
+              <button onClick={exportarPDF}   className="btn-secondary text-xs py-1">📄 {selecionados.size > 0 ? `PDF (${selecionados.size})` : 'PDF'}</button>
             </div>
           </div>
 
-          {/* Filtros de status */}
-          <div className="grid grid-cols-4 gap-2 mb-4">
-            {STATUS_ORDER.map(s => (
+          {/* Cards de status */}
+          <div className="grid grid-cols-5 gap-2 mb-4">
+            {Object.entries(STATUS_CONFIG).map(([s, cfg]) => (
               <button key={s} onClick={() => toggleStatus(s)}
-                className={'p-2 rounded-lg border-2 text-center transition-all select-none ' + (
-                  statusAtivos.has(s) ? STATUS_CLS[s] + ' shadow-sm' : 'border-slate-200 bg-white opacity-40 hover:opacity-60'
-                )}>
+                className={`p-2 rounded-lg border-2 text-center transition-all select-none ${statusAtivos.has(s) ? cfg.cls + ' shadow-sm' : 'border-slate-200 bg-white opacity-40 hover:opacity-60'}`}>
                 <p className="text-lg font-bold">{statsStatus[s] || 0}</p>
-                <p className="text-[10px] font-medium leading-tight">{s}</p>
+                <p className="text-[10px] font-medium leading-tight">{cfg.icone} {s}</p>
               </button>
             ))}
           </div>
 
           {/* Barra de controles */}
           <div className="flex gap-2 mb-3 flex-wrap items-center">
-            <input className="input max-w-xs text-sm" placeholder="Buscar por título..."
-              value={busca} onChange={e => setBusca(e.target.value)} />
+            <input className="input max-w-xs text-sm" placeholder="Buscar por título..." value={busca} onChange={e => setBusca(e.target.value)} />
             <select className="input w-auto text-xs" value={ordenacao} onChange={e => setOrdenacao(e.target.value)}>
               <option value="original">Ordem original</option>
-              <option value="num_asc">Nº — crescente</option>
-              <option value="num_desc">Nº — decrescente</option>
-              <option value="status">Por tipo</option>
-            </select>
-            <select className="input w-auto text-xs" value={filtroNivel} onChange={e => setFiltroNivel(e.target.value)}>
-              <option value="todos">Todos os níveis</option>
-              <option value="superior">▲ Superior</option>
-              <option value="inferior">▼ Inferior</option>
-              <option value="igual">= Igual</option>
+              <option value="status">Por resultado (melhor → pior)</option>
+              <option value="status_desc">Por resultado (pior → melhor)</option>
             </select>
             <label className="flex items-center gap-1.5 text-xs text-slate-600 cursor-pointer">
               <input type="checkbox" checked={mostrarDiff} onChange={e => setMostrarDiff(e.target.checked)} />
@@ -717,46 +602,44 @@ export default function Negociacao() {
           {/* Seleção em massa */}
           <div className="flex items-center gap-2 mb-2 px-3 py-1.5 bg-slate-50 rounded-lg text-xs text-slate-500">
             <input type="checkbox" checked={todosSel} onChange={toggleSelTodos} className="w-4 h-4 cursor-pointer" />
-            <span>{todosSel ? 'Desselecionar tudo' : 'Selecionar tudo'} — {filtrado.length} visíveis</span>
+            <span>{todosSel ? 'Desselecionar tudo' : 'Selecionar tudo'} — {filtradoOrdenado.length} visíveis</span>
             {selecionados.size > 0 && <span className="ml-auto text-brand-600 font-medium">{selecionados.size} selecionada(s)</span>}
           </div>
 
-          {/* Cards de cláusulas */}
+          {/* Cards */}
           <div className="space-y-2">
-            {filtrado.map((r, idx) => {
+            {filtradoOrdenado.map((r, idx) => {
               const expanded = isExpanded(idx)
               const selected = selecionados.has(idx)
               const { comparadas } = resultado
+              const cfgStatus = STATUS_CONFIG[r.statusGeral] || {}
 
               return (
-                <div key={idx} className={'card overflow-hidden transition-all ' + (selected ? 'ring-2 ring-brand-400' : '')}>
+                <div key={idx} className={`card overflow-hidden transition-all ${selected ? 'ring-2 ring-brand-400' : ''}`}>
                   {/* Cabeçalho do card */}
                   <div className="w-full text-left p-3 hover:bg-surface-50 transition-colors cursor-pointer"
                     onClick={() => toggleCard(idx)}>
                     <div className="flex items-center gap-2 flex-wrap">
                       <input type="checkbox" checked={selected}
-                        onChange={() => toggleSel(idx)}
-                        onClick={e => e.stopPropagation()}
+                        onChange={() => toggleSel(idx)} onClick={e => e.stopPropagation()}
                         className="w-4 h-4 flex-shrink-0 cursor-pointer accent-blue-600" />
-                      <span className={'text-xs px-2 py-0.5 rounded-full font-medium border flex-shrink-0 ' + STATUS_CLS[r.statusGeral]}>
-                        {r.statusGeral}
+                      <span className={`text-xs px-2 py-0.5 rounded-full font-semibold border flex-shrink-0 ${cfgStatus.cls}`}>
+                        {cfgStatus.icone} {r.statusGeral}
                       </span>
-                      <p className="text-sm text-slate-700 flex-1 min-w-0 truncate">
+                      <p className="text-sm text-slate-700 flex-1 min-w-0 truncate font-medium">
                         {r.clausulaBase
                           ? (r.clausulaBase.numero ? r.clausulaBase.numero + ' — ' : '') + r.clausulaBase.titulo
-                          : <span className="text-slate-400 italic">Nova em {FONTES_CONFIG[r.fonte]?.label}</span>}
+                          : <span className="text-slate-400 italic">Exclusiva: {r.clausulaNova?.titulo || '—'}</span>}
                       </p>
-                      {/* Badges de nível por fonte comparada */}
+                      {/* Badges por fonte comparada */}
                       <div className="flex gap-1 flex-shrink-0 flex-wrap">
                         {comparadas.map(fc => {
-                          const par = r.pares[fc]
-                          const nivel = par
-                            ? avaliarSuperioridade(r.clausulaBase?.conteudo, par.clausulaB?.conteudo)
-                            : 'sem_base'
+                          const av = r.avaliacoes?.[fc] || {}
+                          const cfg2 = STATUS_CONFIG[av.status] || {}
                           return (
-                            <span key={fc} className={`text-xs px-1.5 py-0.5 rounded-full font-medium ${NIVEL_CLS[nivel]}`}
-                              title={`${FONTES_CONFIG[fc]?.label}: ${NIVEL_LABEL[nivel]}`}>
-                              {FONTES_CONFIG[fc]?.icone} {NIVEL_LABEL[nivel]}
+                            <span key={fc} title={av.resumo}
+                              className={`text-xs px-1.5 py-0.5 rounded-full font-medium border ${cfg2.cls || 'bg-slate-100 text-slate-500'}`}>
+                              {FONTES_CONFIG[fc]?.icone} {cfg2.icone} {av.status || '—'}
                             </span>
                           )
                         })}
@@ -767,12 +650,12 @@ export default function Negociacao() {
 
                   {/* Corpo expandido */}
                   {expanded && (
-                    <div className={`border-t border-slate-100 grid divide-x divide-slate-100`}
+                    <div className="border-t border-slate-100 grid divide-x divide-slate-100"
                       style={{ gridTemplateColumns: `repeat(${1 + comparadas.length}, minmax(0, 1fr))` }}>
-                      {/* Coluna da base */}
+                      {/* Coluna base */}
                       <div className="p-4 bg-amber-50/20">
-                        <p className="text-xs font-bold text-amber-700 mb-2 uppercase tracking-wide">
-                          {FONTES_CONFIG[resultado.baseEfetiva]?.icone} {FONTES_CONFIG[resultado.baseEfetiva]?.label} (base)
+                        <p className="text-xs font-bold text-slate-600 uppercase tracking-wide mb-2">
+                          {FONTES_CONFIG[resultado.baseEfetiva]?.icone} {FONTES_CONFIG[resultado.baseEfetiva]?.label} <span className="text-slate-400 font-normal normal-case">(base)</span>
                         </p>
                         {r.clausulaBase ? (
                           <>
@@ -780,36 +663,44 @@ export default function Negociacao() {
                             <p className="text-xs text-slate-600 leading-relaxed whitespace-pre-wrap">{r.clausulaBase.conteudo}</p>
                           </>
                         ) : (
-                          <p className="text-xs text-slate-400 italic">Cláusula nova — não existe na fonte base</p>
+                          <p className="text-xs text-slate-400 italic">Cláusula não existe na fonte base</p>
                         )}
                       </div>
 
-                      {/* Colunas das comparadas */}
+                      {/* Colunas comparadas */}
                       {comparadas.map(fc => {
                         const par = r.pares[fc]
-                        const cfg = FONTES_CONFIG[fc]
-                        const nivel = par
-                          ? avaliarSuperioridade(r.clausulaBase?.conteudo, par.clausulaB?.conteudo)
-                          : 'sem_base'
-                        const diff = mostrarDiff && par?.status?.label === 'ALTERADA'
-                          ? diffTexto(r.clausulaBase?.conteudo || '', par.clausulaB?.conteudo || '')
+                        const av = r.avaliacoes?.[fc] || {}
+                        const cfg2 = STATUS_CONFIG[av.status] || {}
+                        const cfgFonte = FONTES_CONFIG[fc]
+                        const diff = mostrarDiff && par?.clausulaB && r.clausulaBase
+                          ? diffTexto(r.clausulaBase.conteudo || '', par.clausulaB.conteudo || '')
                           : null
 
                         return (
                           <div key={fc} className="p-4">
+                            {/* Header da coluna */}
                             <div className="flex items-center justify-between mb-2">
                               <p className="text-xs font-bold text-slate-600 uppercase tracking-wide">
-                                {cfg?.icone} {cfg?.label}
+                                {cfgFonte?.icone} {cfgFonte?.label}
                               </p>
-                              <span className={`text-xs px-1.5 py-0.5 rounded-full font-medium ${NIVEL_CLS[nivel]}`}>
-                                {NIVEL_LABEL[nivel]}
+                              <span className={`text-xs px-2 py-0.5 rounded-full font-semibold border ${cfg2.cls || 'bg-slate-100 text-slate-500'}`}>
+                                {cfg2.icone} {av.status || '—'}
                               </span>
                             </div>
+                            {/* Resumo explicativo — sempre visível ao expandir */}
+                            {av.resumo && (
+                              <div className={`text-xs rounded-lg px-2.5 py-2 mb-2 border ${cfg2.cls || 'bg-slate-50 text-slate-600'}`}>
+                                <p className="font-medium mb-0.5">📝 Análise automática</p>
+                                <p className="font-normal opacity-90">{av.resumo}</p>
+                              </div>
+                            )}
+                            {/* Conteúdo */}
                             {par?.clausulaB ? (
                               <>
                                 <p className="text-xs font-semibold text-slate-700 mb-1">{par.clausulaB.titulo}</p>
                                 {diff
-                                  ? <DiffText html={diff.html_b} />
+                                  ? <DiffSpan html={diff.html_b} />
                                   : <p className="text-xs text-slate-600 leading-relaxed whitespace-pre-wrap">{par.clausulaB.conteudo}</p>}
                               </>
                             ) : (
@@ -824,20 +715,19 @@ export default function Negociacao() {
               )
             })}
           </div>
-
-          {filtrado.length === 0 && (
-            <p className="text-center text-sm text-slate-400 py-8">Nenhuma cláusula encontrada com os filtros aplicados.</p>
+          {filtradoOrdenado.length === 0 && (
+            <p className="text-center text-sm text-slate-400 py-8">Nenhuma cláusula com os filtros aplicados.</p>
           )}
         </div>
       )}
 
-      {/* Floating bar de seleção */}
+      {/* Floating bar */}
       {selecionados.size > 0 && (
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-slate-800 text-white rounded-2xl px-5 py-3 flex items-center gap-3 shadow-2xl z-50 border border-slate-700">
-          <span className="text-sm font-semibold">{selecionados.size} cláusula(s) selecionada(s)</span>
-          <button onClick={exportarExcel} className="text-xs bg-white/15 hover:bg-white/25 px-3 py-1.5 rounded-lg transition-colors">📊 Excel</button>
-          <button onClick={exportarPDF}   className="text-xs bg-white/15 hover:bg-white/25 px-3 py-1.5 rounded-lg transition-colors">📄 PDF</button>
-          <button onClick={() => setSelecionados(new Set())} className="text-xs opacity-60 hover:opacity-100 ml-1">✕ Limpar</button>
+          <span className="text-sm font-semibold">{selecionados.size} cláusula(s)</span>
+          <button onClick={exportarExcel} className="text-xs bg-white/15 hover:bg-white/25 px-3 py-1.5 rounded-lg">📊 Excel</button>
+          <button onClick={exportarPDF}   className="text-xs bg-white/15 hover:bg-white/25 px-3 py-1.5 rounded-lg">📄 PDF</button>
+          <button onClick={() => setSelecionados(new Set())} className="text-xs opacity-60 hover:opacity-100 ml-1">✕</button>
         </div>
       )}
     </div>

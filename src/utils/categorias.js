@@ -2,7 +2,8 @@ export const CATEGORIAS = {
   'Remuneração': [
     'Piso Salarial', 'Reajuste', 'Equiparação Salarial', 'Gratificação',
     'Gratificação por Tempo de Serviço', 'PLR/PPR', 'Comissão', 'Adicional de Função',
-    'Adicional Noturno', '13º Salário', 'Comprovante de Pagamento', 'Descontos em Folha'
+    'Adicional Noturno', '13º Salário', 'Comprovante de Pagamento', 'Descontos em Folha',
+    'DSR', 'Adiantamento Salarial',
   ],
   'Jornada de Trabalho': [
     'Banco de Horas', 'Hora Extra', 'Turno', 'Escala', 'Intervalo Intrajornada',

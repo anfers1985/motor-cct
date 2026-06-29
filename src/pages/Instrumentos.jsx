@@ -9,7 +9,9 @@ import { extractExcelText } from '../services/extractors/excel'
 import { CATEGORIAS } from '../utils/categorias'
 import Modal from '../components/UI/Modal'
 
-const TIPOS = ['ACT','CCT','Aditivo','Acordo Extrajudicial']
+const TIPOS = ['ACT','CCT','Aditivo','Acordo Extrajudicial','Prática Interna','Proposta Sindical']
+// Tipos que não entram no gráfico de reajuste do Dashboard
+const TIPOS_SEM_REAJUSTE = ['Prática Interna', 'Proposta Sindical']
 const EMPTY = { tipo: 'CCT', nome: '', empresa_id: '', operacao_id: '', sindicato_laboral_id: '', sindicato_patronal_id: '', vigencia_inicio: '', vigencia_fim: '' }
 
 // Converte string vazia em null para campos FK
@@ -19,13 +21,34 @@ function limparFK(val) { return val === '' ? null : val }
 function ModalRevisao({ open, onClose, clausulas: inicial, onConfirmar, instNome }) {
   const [clausulas, setClausulas] = useState([])
   const [salvando, setSalvando] = useState(false)
-  const [expandido, setExpandido] = useState(null)
+  const [expandidos, setExpandidos] = useState(new Set())
+  const [expandidosTudo, setExpandidosTudo] = useState(false)
   const [busca, setBusca] = useState('')
   const [filtroCat, setFiltroCat] = useState('')
 
   useEffect(() => {
-    if (open && inicial) setClausulas(inicial.map((c, i) => ({ ...c, _idx: i })))
+    if (open && inicial) {
+      setClausulas(inicial.map((c, i) => ({ ...c, _idx: i })))
+      setExpandidos(new Set())
+      setExpandidosTudo(false)
+    }
   }, [open, inicial])
+
+  function toggleExpandido(idx) {
+    setExpandidos(prev => {
+      const n = new Set(prev)
+      n.has(idx) ? n.delete(idx) : n.add(idx)
+      return n
+    })
+  }
+
+  function toggleExpandirTudo() {
+    setExpandidosTudo(v => !v)
+    setExpandidos(new Set())
+  }
+
+  // Se expandidosTudo=true, a lógica se inverte: expandidos contém os RECOLHIDOS
+  const isExpanded = idx => expandidosTudo ? !expandidos.has(idx) : expandidos.has(idx)
 
   function atualizar(idx, campo, valor) {
     setClausulas(prev => prev.map(c =>
@@ -75,7 +98,15 @@ function ModalRevisao({ open, onClose, clausulas: inicial, onConfirmar, instNome
               )}
             </p>
           </div>
-          <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-slate-100 text-slate-500">✕</button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={toggleExpandirTudo}
+              className="text-xs btn-secondary py-1 px-3"
+            >
+              {expandidosTudo ? '📕 Recolher tudo' : '📖 Expandir tudo'}
+            </button>
+            <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-slate-100 text-slate-500">✕</button>
+          </div>
         </div>
 
         {/* Barra de filtros */}
@@ -111,7 +142,7 @@ function ModalRevisao({ open, onClose, clausulas: inicial, onConfirmar, instNome
             </thead>
             <tbody>
               {filtradas.map((c) => {
-                const aberto = expandido === c._idx
+                const aberto = isExpanded(c._idx)
                 const subcats = todasSubcats(c.categoria)
                 const semCat = !c.categoria
                 return (
@@ -175,7 +206,7 @@ function ModalRevisao({ open, onClose, clausulas: inicial, onConfirmar, instNome
                       <td className="px-3 py-2 text-center">
                         <button
                           className="text-brand-500 hover:text-brand-700 transition-colors text-xs px-2 py-0.5 rounded border border-brand-200 hover:bg-brand-50"
-                          onClick={() => setExpandido(aberto ? null : c._idx)}
+                          onClick={() => toggleExpandido(c._idx)}
                         >
                           {aberto ? 'fechar' : 'ver'}
                         </button>
