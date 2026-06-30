@@ -64,14 +64,81 @@ export const STATUS_CONFIG = {
   Exclusiva:  { cls: 'bg-purple-100 text-purple-800 border-purple-300',    order: 4, icone: '◆' },
 }
 
+// ─── Formata texto de vigência para o resumo ─────────────────────────────────
+function formatarVigencia(vig) {
+  if (!vig || (!vig.inicio && !vig.fim)) return ''
+  const fmt = d => {
+    if (!d) return '?'
+    const [y, m, day] = d.split('-')
+    return `${day}/${m}/${y}`
+  }
+  const hoje = new Date().toISOString().slice(0, 10)
+  const vencido = vig.fim && vig.fim < hoje
+  const periodo = `${fmt(vig.inicio)} a ${fmt(vig.fim)}`
+  return vencido ? `${periodo}, vencida` : `${periodo}, vigente`
+}
+
+// ─── Extrai trechos concretos de diferença (para status Modificada) ──────────
+// Usa o mesmo diff palavra-a-palavra usado na UI, mas retorna apenas as
+// primeiras N trocas relevantes como pares "removido → adicionado"
+function extrairDiferencasConcretas(textoA, textoB, maxTrocas = 3) {
+  const wA = (textoA || '').split(/\s+/).filter(Boolean)
+  const wB = (textoB || '').split(/\s+/).filter(Boolean)
+  const m = wA.length, n = wB.length
+  if (m === 0 || n === 0) return []
+  // Limita o tamanho para não travar em cláusulas muito longas
+  const capM = Math.min(m, 400), capN = Math.min(n, 400)
+  const dp = Array.from({ length: capM + 1 }, () => Array(capN + 1).fill(0))
+  for (let i = 1; i <= capM; i++) for (let j = 1; j <= capN; j++)
+    dp[i][j] = wA[i-1] === wB[j-1] ? dp[i-1][j-1] + 1 : Math.max(dp[i-1][j], dp[i][j-1])
+  const ops = []; let i = capM, j = capN
+  while (i > 0 || j > 0) {
+    if (i > 0 && j > 0 && wA[i-1] === wB[j-1]) { ops.unshift({ t: 'eq', v: wA[i-1] }); i--; j-- }
+    else if (j > 0 && (i === 0 || dp[i][j-1] >= dp[i-1][j])) { ops.unshift({ t: 'add', v: wB[j-1] }); j-- }
+    else { ops.unshift({ t: 'rem', v: wA[i-1] }); i-- }
+  }
+  // Agrupa sequências consecutivas de rem/add em blocos, formando pares de troca
+  const blocos = []
+  let atual = null
+  for (const op of ops) {
+    if (op.t === 'eq') { atual = null; continue }
+    if (!atual || atual.t !== op.t) { atual = { t: op.t, palavras: [op.v] }; blocos.push(atual) }
+    else atual.palavras.push(op.v)
+  }
+  // Junta blocos rem seguidos de add em trocas, ou lista isoladamente
+  const trocas = []
+  for (let k = 0; k < blocos.length && trocas.length < maxTrocas; k++) {
+    const b = blocos[k]
+    const texto = b.palavras.slice(0, 8).join(' ') + (b.palavras.length > 8 ? '…' : '')
+    if (b.t === 'rem' && blocos[k + 1]?.t === 'add') {
+      const next = blocos[++k]
+      const textoNext = next.palavras.slice(0, 8).join(' ') + (next.palavras.length > 8 ? '…' : '')
+      trocas.push(`"${texto}" → "${textoNext}"`)
+    } else if (b.t === 'rem') {
+      trocas.push(`removido: "${texto}"`)
+    } else {
+      trocas.push(`adicionado: "${texto}"`)
+    }
+  }
+  return trocas
+}
+
 // ─── Avaliação de superioridade com resumo ────────────────────────────────────
 // Retorna { status, resumo } onde status é um dos termos acima
-// e resumo é uma string explicando o motivo
+// e resumo é uma string explicando o motivo.
+// vigenciaBase/vigenciaComparada: { inicio, fim } — usados apenas para
+// enriquecer o resumo com contexto temporal (qual instrumento está vigente).
 
-export function avaliarSuperioridade(textoBase, textoComparado, tituloClausula = '') {
+export function avaliarSuperioridade(textoBase, textoComparado, tituloClausula = '', vigenciaBase = null, vigenciaComparada = null) {
   if (!textoBase && !textoComparado) return { status: 'Exclusiva', resumo: 'Cláusula sem conteúdo em ambas as fontes.' }
   if (!textoBase) return { status: 'Exclusiva', resumo: 'Cláusula presente apenas na fonte comparada (nova em relação à base).' }
   if (!textoComparado) return { status: 'Exclusiva', resumo: 'Cláusula presente apenas na fonte base (não encontrada na comparada).' }
+
+  const vigBaseTxt = formatarVigencia(vigenciaBase)
+  const vigCompTxt = formatarVigencia(vigenciaComparada)
+  const contextoVigencia = (vigBaseTxt || vigCompTxt)
+    ? ` (base: ${vigBaseTxt || 'vigência não informada'}; comparada: ${vigCompTxt || 'vigência não informada'})`
+    : ''
 
   const numBase = extrairNumericos(textoBase)
   const numComp = extrairNumericos(textoComparado)
@@ -86,18 +153,18 @@ export function avaliarSuperioridade(textoBase, textoComparado, tituloClausula =
     if (Math.abs(diff) < 0.01) {
       return {
         status: 'Igual',
-        resumo: `Percentual idêntico em ambas as fontes: ${maxBase.toFixed(2).replace('.', ',')}%.`,
+        resumo: `Percentual idêntico em ambas as fontes: ${maxBase.toFixed(2).replace('.', ',')}%.${contextoVigencia}`,
       }
     }
     if (diff > 0) {
       return {
         status: 'Superior',
-        resumo: `A fonte comparada prevê ${maxComp.toFixed(2).replace('.', ',')}% contra ${maxBase.toFixed(2).replace('.', ',')}% da base — diferença de +${diffPct} p.p. em favor da comparada.`,
+        resumo: `A fonte comparada prevê ${maxComp.toFixed(2).replace('.', ',')}% contra ${maxBase.toFixed(2).replace('.', ',')}% da base — diferença de +${diffPct} p.p. em favor da comparada.${contextoVigencia}`,
       }
     }
     return {
       status: 'Inferior',
-      resumo: `A fonte comparada prevê ${maxComp.toFixed(2).replace('.', ',')}% contra ${maxBase.toFixed(2).replace('.', ',')}% da base — diferença de −${diffPct} p.p. desfavorável à comparada.`,
+      resumo: `A fonte comparada prevê ${maxComp.toFixed(2).replace('.', ',')}% contra ${maxBase.toFixed(2).replace('.', ',')}% da base — diferença de −${diffPct} p.p. desfavorável à comparada.${contextoVigencia}`,
     }
   }
 
@@ -110,18 +177,18 @@ export function avaliarSuperioridade(textoBase, textoComparado, tituloClausula =
     if (Math.abs(diff) < 0.01) {
       return {
         status: 'Igual',
-        resumo: `Valor idêntico em ambas as fontes: ${fmt(maxBase)}.`,
+        resumo: `Valor idêntico em ambas as fontes: ${fmt(maxBase)}.${contextoVigencia}`,
       }
     }
     if (diff > 0) {
       return {
         status: 'Superior',
-        resumo: `A fonte comparada prevê ${fmt(maxComp)} contra ${fmt(maxBase)} da base — diferença de +${fmt(diff)} em favor da comparada.`,
+        resumo: `A fonte comparada prevê ${fmt(maxComp)} contra ${fmt(maxBase)} da base — diferença de +${fmt(diff)} em favor da comparada.${contextoVigencia}`,
       }
     }
     return {
       status: 'Inferior',
-      resumo: `A fonte comparada prevê ${fmt(maxComp)} contra ${fmt(maxBase)} da base — diferença de −${fmt(Math.abs(diff))} desfavorável à comparada.`,
+      resumo: `A fonte comparada prevê ${fmt(maxComp)} contra ${fmt(maxBase)} da base — diferença de −${fmt(Math.abs(diff))} desfavorável à comparada.${contextoVigencia}`,
     }
   }
 
@@ -130,12 +197,16 @@ export function avaliarSuperioridade(textoBase, textoComparado, tituloClausula =
   if (sim >= 0.95) {
     return {
       status: 'Igual',
-      resumo: 'Conteúdo praticamente idêntico nas duas fontes (sem diferenças relevantes detectadas).',
+      resumo: `Conteúdo praticamente idêntico nas duas fontes (sem diferenças relevantes detectadas).${contextoVigencia}`,
     }
   }
+  const trocas = extrairDiferencasConcretas(textoBase, textoComparado, 3)
+  const trocasTxt = trocas.length > 0
+    ? ` Principais diferenças: ${trocas.join('; ')}.`
+    : ''
   return {
     status: 'Modificada',
-    resumo: `Redação diferente entre as fontes (similaridade textual: ${(sim * 100).toFixed(0)}%). Sem valores numéricos para determinar superioridade automaticamente — análise jurídica recomendada.`,
+    resumo: `Redação diferente entre as fontes (similaridade textual: ${(sim * 100).toFixed(0)}%).${trocasTxt} Sem valores numéricos para determinar superioridade automaticamente — análise jurídica recomendada.${contextoVigencia}`,
   }
 }
 

@@ -374,7 +374,12 @@ export default function Instrumentos() {
         upd.arquivo_nome = arquivoNome
         upd.status_processamento = 'aguardando' // novo arquivo → reprocessar
       }
-      await supabase.from('instrumentos').update(upd).eq('id', editId)
+      const { error } = await supabase.from('instrumentos').update(upd).eq('id', editId)
+      if (error) {
+        setLoading(false)
+        alert('Erro ao salvar instrumento: ' + error.message + '\n\nSe o erro mencionar "tipo_check" ou "constraint", é necessário rodar a migração SQL em sql_updates/001_add_tipos_instrumento.sql no Supabase.')
+        return
+      }
     } else {
       // Inserção: status começa como aguardando
       const payload = {
@@ -387,7 +392,12 @@ export default function Instrumentos() {
         vigencia_inicio:       form.vigencia_inicio || null,
         vigencia_fim:          form.vigencia_fim    || null,
       }
-      await supabase.from('instrumentos').insert(payload)
+      const { error } = await supabase.from('instrumentos').insert(payload)
+      if (error) {
+        setLoading(false)
+        alert('Erro ao salvar instrumento: ' + error.message + '\n\nSe o erro mencionar "tipo_check" ou "constraint", é necessário rodar a migração SQL em sql_updates/001_add_tipos_instrumento.sql no Supabase.')
+        return
+      }
     }
 
     setModal(false); setArquivo(null); setLoading(false); carregar()
@@ -476,8 +486,15 @@ export default function Instrumentos() {
       user_id: user.id,
       tags: c.tags || [],
     }))
-    await supabase.from('clausulas').insert(rows)
-    await supabase.from('instrumentos').update({ status_processamento: 'processado' }).eq('id', instId)
+    const { error: insertError } = await supabase.from('clausulas').insert(rows)
+    if (insertError) {
+      alert('Erro ao salvar cláusulas: ' + insertError.message)
+      return
+    }
+    const { error: updError } = await supabase.from('instrumentos').update({ status_processamento: 'processado' }).eq('id', instId)
+    if (updError) {
+      alert('Cláusulas salvas, mas houve erro ao atualizar o status do instrumento: ' + updError.message)
+    }
 
     setRevisao({ open: false, clausulas: [], instId: null, instNome: '' })
     setLog(l => ({ ...l, [instId]: `✅ ${rows.length} cláusulas salvas após revisão.` }))

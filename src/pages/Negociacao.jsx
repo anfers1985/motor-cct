@@ -90,6 +90,7 @@ export default function Negociacao() {
   const [statusAtivos, setStatusAtivos] = useState(new Set(Object.keys(STATUS_CONFIG)))
   const [mostrarDiff, setMostrarDiff] = useState(true)
   const [ordenacao, setOrdenacao] = useState('original')
+  const [fonteOrdenacao, setFonteOrdenacao] = useState('') // qual fonte usar como referência ao ordenar por status
   const [expandidos, setExpandidos] = useState(new Set())
   const [modoExpandido, setModoExpandido] = useState(false)
   const [selecionados, setSelecionados] = useState(new Set())
@@ -237,6 +238,13 @@ export default function Negociacao() {
     const { clausulasPorFonte, comparativos, baseEfetiva, comparadas } = resultado
     const clausulasBase = clausulasPorFonte[baseEfetiva] || []
 
+    // Vigência de cada instrumento selecionado, por fonte
+    const vigenciaPorFonte = {}
+    for (const f of resultado.fontesLista) {
+      const inst = todosInstrumentos.find(i => i.id === instSelecionado[f])
+      vigenciaPorFonte[f] = inst ? { inicio: inst.vigencia_inicio, fim: inst.vigencia_fim } : null
+    }
+
     const linhas = clausulasBase.map((cb, idx) => {
       const pares = {}
       const avaliacoes = {}
@@ -244,7 +252,10 @@ export default function Negociacao() {
         const comp = comparativos[fc] || []
         const par = comp.find(r => r.clausulaA?.id === cb.id)
         pares[fc] = par || null
-        avaliacoes[fc] = avaliarSuperioridade(cb.conteudo, par?.clausulaB?.conteudo, cb.titulo)
+        avaliacoes[fc] = avaliarSuperioridade(
+          cb.conteudo, par?.clausulaB?.conteudo, cb.titulo,
+          vigenciaPorFonte[baseEfetiva], vigenciaPorFonte[fc]
+        )
       }
       // Status geral da linha: pior status entre todas as comparadas
       const statusOrder = ['Exclusiva', 'Inferior', 'Superior', 'Modificada', 'Igual']
@@ -289,9 +300,15 @@ export default function Negociacao() {
   const filtradoOrdenado = (() => {
     const arr = [...filtrado]
     const ord = Object.keys(STATUS_CONFIG)
+    // Função de chave: se uma fonte específica foi escolhida, ordena pelo status
+    // dessa fonte (av.status); senão usa o statusGeral (pior caso entre as fontes)
+    const statusKey = r => {
+      if (fonteOrdenacao && r.avaliacoes?.[fonteOrdenacao]) return r.avaliacoes[fonteOrdenacao].status
+      return r.statusGeral
+    }
     switch (ordenacao) {
-      case 'status': return arr.sort((a, b) => ord.indexOf(a.statusGeral) - ord.indexOf(b.statusGeral))
-      case 'status_desc': return arr.sort((a, b) => ord.indexOf(b.statusGeral) - ord.indexOf(a.statusGeral))
+      case 'status':      return arr.sort((a, b) => ord.indexOf(statusKey(a)) - ord.indexOf(statusKey(b)))
+      case 'status_desc': return arr.sort((a, b) => ord.indexOf(statusKey(b)) - ord.indexOf(statusKey(a)))
       default: return arr
     }
   })()
@@ -358,94 +375,74 @@ export default function Negociacao() {
       Modificada: [219, 234, 254],
       Exclusiva:  [243, 232, 255],
     }
+    const STATUS_TEXT_COLOR = {
+      Superior:   [22, 101, 52],
+      Inferior:   [185, 28, 28],
+      Igual:      [71, 85, 105],
+      Modificada: [30, 64, 175],
+      Exclusiva:  [107, 33, 168],
+    }
 
     doc.setFontSize(14); doc.setFont('helvetica', 'bold')
-    doc.text('Negociação Sindical — Comparativo de Fontes', 14, 16)
+    doc.text('Negociação Sindical — Comparativo de Fontes', 14, 14)
     doc.setFontSize(9); doc.setFont('helvetica', 'normal'); doc.setTextColor(100)
-    doc.text(`Base: ${fBase}  ·  Comparadas: ${comparadas.map(f => FONTES_CONFIG[f]?.label).join(', ')}`, 14, 22)
-    doc.text(`Gerado em: ${new Date().toLocaleString('pt-BR')}  ·  Total: ${itens.length} cláusulas`, 14, 27)
+    doc.text(`Base: ${fBase}  ·  Comparadas: ${comparadas.map(f => FONTES_CONFIG[f]?.label).join(', ')}`, 14, 20)
+    doc.text(`Gerado em: ${new Date().toLocaleString('pt-BR')}  ·  Total: ${itens.length} cláusulas`, 14, 25)
     doc.setTextColor(0)
 
-    let y = 33
-    const pageW = doc.internal.pageSize.getWidth()
-    const margin = 14
-    const usableW = pageW - margin * 2
+    // Monta uma seção (tabela autoTable) por fonte comparada — garante quebra de
+    // página confiável e cada cláusula vira uma linha com: nº, título, conteúdo
+    // base, conteúdo comparado, RESULTADO (status) e RESUMO explicativo.
+    let startY = 30
+    for (let ci = 0; ci < comparadas.length; ci++) {
+      const fc = comparadas[ci]
+      const cfgFonte = FONTES_CONFIG[fc]
 
-    for (const r of itens) {
-      const titulo = r.clausulaBase?.titulo || r.clausulaNova?.titulo || '—'
-      const numClausula = r.clausulaBase?.numero || '—'
-      const cor = STATUS_COLOR[r.statusGeral] || [255, 255, 255]
+      if (ci > 0) { doc.addPage(); startY = 16 }
 
-      // Verifica se precisa de nova página (estimativa conservadora)
-      if (y > 175) { doc.addPage(); y = 14 }
+      doc.setFontSize(11); doc.setFont('helvetica', 'bold'); doc.setTextColor(0)
+      doc.text(`${fBase} (base)  vs  ${cfgFonte?.label || fc}`, 14, startY)
+      startY += 5
 
-      // Cabeçalho da cláusula
-      doc.setFillColor(...cor)
-      doc.roundedRect(margin, y, usableW, 8, 2, 2, 'F')
-      doc.setFontSize(9); doc.setFont('helvetica', 'bold')
-      doc.text(`${numClausula} — ${titulo}`, margin + 2, y + 5.5)
-      doc.setFontSize(8); doc.setFont('helvetica', 'normal'); doc.setTextColor(80)
-      doc.text(r.statusGeral, pageW - margin - 2, y + 5.5, { align: 'right' })
-      doc.setTextColor(0)
-      y += 10
-
-      // Colunas: base + cada comparada
-      const colW = usableW / (1 + comparadas.length)
-
-      // Coluna base
-      const conteudoBase = r.clausulaBase?.conteudo || 'Cláusula exclusiva da fonte comparada'
-      doc.setFontSize(7); doc.setFont('helvetica', 'bold')
-      doc.text(`${FONTES_CONFIG[baseEfetiva]?.icone || ''} ${fBase} (BASE)`, margin + 1, y + 4)
-      doc.setFont('helvetica', 'normal')
-      const linhasBase = doc.splitTextToSize(conteudoBase.slice(0, 600), colW - 4)
-      doc.text(linhasBase.slice(0, 12), margin + 1, y + 8)
-      const altBase = Math.min(linhasBase.length, 12) * 3.5 + 10
-
-      // Colunas comparadas
-      let altMax = altBase
-      for (let ci = 0; ci < comparadas.length; ci++) {
-        const fc = comparadas[ci]
-        const xCol = margin + colW * (ci + 1)
-        const av = r.avaliacoes?.[fc] || {}
+      const head = [['Nº', 'Título', `${fBase} (base)`, cfgFonte?.label || fc, 'Resultado', 'Resumo da análise']]
+      const body = itens.map(r => {
         const par = r.pares?.[fc]
-        const conteudoComp = par?.clausulaB?.conteudo || 'Não encontrado nesta fonte'
-        const cfgFonte = FONTES_CONFIG[fc]
-        const cfgStatus = STATUS_CONFIG[av.status] || {}
+        const av = r.avaliacoes?.[fc] || {}
+        const numero = r.clausulaBase?.numero || r.clausulaNova?.numero || '—'
+        const titulo = r.clausulaBase?.titulo || r.clausulaNova?.titulo || '—'
+        const conteudoBase = r.clausulaBase?.conteudo || '— exclusiva da fonte comparada —'
+        const conteudoComp = par?.clausulaB?.conteudo || '— não encontrado nesta fonte —'
+        return [numero, titulo, conteudoBase, conteudoComp, av.status || '—', av.resumo || '']
+      })
 
-        doc.setFontSize(7); doc.setFont('helvetica', 'bold')
-        doc.text(`${cfgFonte?.icone || ''} ${cfgFonte?.label || fc}`, xCol + 1, y + 4)
+      doc.autoTable({
+        startY,
+        head,
+        body,
+        margin: { left: 14, right: 14 },
+        styles: { fontSize: 7, cellPadding: 1.8, valign: 'top', overflow: 'linebreak' },
+        headStyles: { fillColor: [79, 70, 229], textColor: 255, fontStyle: 'bold' },
+        columnStyles: {
+          0: { cellWidth: 12 },
+          1: { cellWidth: 32 },
+          2: { cellWidth: 70 },
+          3: { cellWidth: 70 },
+          4: { cellWidth: 20, fontStyle: 'bold' },
+          5: { cellWidth: 'auto', fontSize: 6.5, fontStyle: 'italic' },
+        },
+        didParseCell: (data) => {
+          // Colore a linha inteira conforme o status (coluna 4 = Resultado)
+          const statusVal = data.row.raw?.[4]
+          const cor = STATUS_COLOR[statusVal]
+          const corTexto = STATUS_TEXT_COLOR[statusVal]
+          if (cor && data.section === 'body') {
+            data.cell.styles.fillColor = cor
+            if (data.column.index === 4 && corTexto) data.cell.styles.textColor = corTexto
+          }
+        },
+      })
 
-        // Badge de resultado
-        doc.setFont('helvetica', 'bold')
-        doc.setTextColor(...(av.status === 'Superior' ? [22, 101, 52] : av.status === 'Inferior' ? [185, 28, 28] : [71, 85, 105]))
-        doc.text(`${cfgStatus.icone || ''} ${av.status || '—'}`, xCol + colW - 2, y + 4, { align: 'right' })
-        doc.setTextColor(0)
-
-        // Resumo explicativo
-        if (av.resumo) {
-          doc.setFont('helvetica', 'italic'); doc.setFontSize(6); doc.setTextColor(80)
-          const resumoLinhas = doc.splitTextToSize(av.resumo, colW - 4)
-          doc.text(resumoLinhas.slice(0, 3), xCol + 1, y + 8)
-          doc.setTextColor(0)
-        }
-
-        // Conteúdo
-        doc.setFont('helvetica', 'normal'); doc.setFontSize(7)
-        const linhasComp = doc.splitTextToSize(conteudoComp.slice(0, 500), colW - 4)
-        doc.text(linhasComp.slice(0, 10), xCol + 1, y + 14)
-        altMax = Math.max(altMax, Math.min(linhasComp.length, 10) * 3.5 + 16)
-      }
-
-      // Borda da cláusula
-      doc.setDrawColor(220, 220, 220)
-      doc.roundedRect(margin, y, usableW, altMax, 1, 1)
-      // Linhas verticais separando colunas
-      for (let ci = 1; ci <= comparadas.length; ci++) {
-        const xLine = margin + colW * ci
-        doc.line(xLine, y, xLine, y + altMax)
-      }
-
-      y += altMax + 4
+      startY = doc.lastAutoTable.finalY + 10
     }
 
     doc.save('negociacao_' + new Date().toISOString().slice(0, 10) + '.pdf')
@@ -590,6 +587,14 @@ export default function Negociacao() {
               <option value="status">Por resultado (melhor → pior)</option>
               <option value="status_desc">Por resultado (pior → melhor)</option>
             </select>
+            {ordenacao !== 'original' && resultado.comparadas.length > 1 && (
+              <select className="input w-auto text-xs" value={fonteOrdenacao} onChange={e => setFonteOrdenacao(e.target.value)}>
+                <option value="">Considerar pior resultado entre as fontes</option>
+                {resultado.comparadas.map(fc => (
+                  <option key={fc} value={fc}>Ordenar pelo resultado vs {FONTES_CONFIG[fc]?.label}</option>
+                ))}
+              </select>
+            )}
             <label className="flex items-center gap-1.5 text-xs text-slate-600 cursor-pointer">
               <input type="checkbox" checked={mostrarDiff} onChange={e => setMostrarDiff(e.target.checked)} />
               Destacar diferenças
@@ -649,7 +654,17 @@ export default function Negociacao() {
                   </div>
 
                   {/* Corpo expandido */}
-                  {expanded && (
+                  {expanded && (() => {
+                    // Diff da base é calculado em relação à PRIMEIRA fonte comparada
+                    // (referência visual principal); as demais colunas recalculam
+                    // o diff individualmente contra a base.
+                    const fcReferencia = comparadas[0]
+                    const parReferencia = fcReferencia ? r.pares[fcReferencia] : null
+                    const diffBase = mostrarDiff && parReferencia?.clausulaB && r.clausulaBase
+                      ? diffTexto(r.clausulaBase.conteudo || '', parReferencia.clausulaB.conteudo || '')
+                      : null
+
+                    return (
                     <div className="border-t border-slate-100 grid divide-x divide-slate-100"
                       style={{ gridTemplateColumns: `repeat(${1 + comparadas.length}, minmax(0, 1fr))` }}>
                       {/* Coluna base */}
@@ -660,7 +675,12 @@ export default function Negociacao() {
                         {r.clausulaBase ? (
                           <>
                             <p className="text-xs font-semibold text-slate-700 mb-1">{r.clausulaBase.titulo}</p>
-                            <p className="text-xs text-slate-600 leading-relaxed whitespace-pre-wrap">{r.clausulaBase.conteudo}</p>
+                            {diffBase
+                              ? <DiffSpan html={diffBase.html_a} />
+                              : <p className="text-xs text-slate-600 leading-relaxed whitespace-pre-wrap">{r.clausulaBase.conteudo}</p>}
+                            {comparadas.length > 1 && (
+                              <p className="text-xs text-slate-400 italic mt-2">Destaque calculado em relação a {FONTES_CONFIG[fcReferencia]?.label}.</p>
+                            )}
                           </>
                         ) : (
                           <p className="text-xs text-slate-400 italic">Cláusula não existe na fonte base</p>
@@ -710,7 +730,8 @@ export default function Negociacao() {
                         )
                       })}
                     </div>
-                  )}
+                    )
+                  })()}
                 </div>
               )
             })}
