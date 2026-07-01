@@ -92,11 +92,12 @@ function extrairNumericos(texto) {
 // Exclusiva  = existe só em um dos instrumentos
 
 export const STATUS_CONFIG = {
-  Superior:   { cls: 'bg-emerald-100 text-emerald-800 border-emerald-300', order: 0, icone: '▲' },
-  Inferior:   { cls: 'bg-red-100 text-red-700 border-red-300',             order: 1, icone: '▼' },
-  Igual:      { cls: 'bg-slate-100 text-slate-600 border-slate-300',       order: 2, icone: '=' },
-  Modificada: { cls: 'bg-blue-100 text-blue-800 border-blue-300',          order: 3, icone: '~' },
-  Exclusiva:  { cls: 'bg-purple-100 text-purple-800 border-purple-300',    order: 4, icone: '◆' },
+  Superior:     { cls: 'bg-emerald-100 text-emerald-800 border-emerald-300', order: 0, icone: '▲' },
+  Inferior:     { cls: 'bg-red-100 text-red-700 border-red-300',             order: 1, icone: '▼' },
+  Igual:        { cls: 'bg-slate-100 text-slate-600 border-slate-300',       order: 2, icone: '=' },
+  Modificada:   { cls: 'bg-blue-100 text-blue-800 border-blue-300',          order: 3, icone: '~' },
+  'Sem previsão': { cls: 'bg-amber-50 text-amber-700 border-amber-200',      order: 4, icone: '−' },
+  Exclusiva:    { cls: 'bg-purple-100 text-purple-800 border-purple-300',    order: 5, icone: '◆' },
 }
 
 // ─── Formata texto de vigência para o resumo ─────────────────────────────────
@@ -165,9 +166,9 @@ function extrairDiferencasConcretas(textoA, textoB, maxTrocas = 3) {
 // enriquecer o resumo com contexto temporal (qual instrumento está vigente).
 
 export function avaliarSuperioridade(textoBase, textoComparado, tituloClausula = '', vigenciaBase = null, vigenciaComparada = null) {
-  if (!textoBase && !textoComparado) return { status: 'Exclusiva', resumo: 'Cláusula sem conteúdo em ambas as fontes.' }
+  if (!textoBase && !textoComparado) return { status: 'Sem previsão', resumo: 'Cláusula sem conteúdo em ambas as fontes.' }
   if (!textoBase) return { status: 'Exclusiva', resumo: 'Cláusula presente apenas na fonte comparada (nova em relação à base).' }
-  if (!textoComparado) return { status: 'Exclusiva', resumo: 'Cláusula presente apenas na fonte base (não encontrada na comparada).' }
+  if (!textoComparado) return { status: 'Sem previsão', resumo: 'Esta fonte não possui previsão equivalente à cláusula da base.' }
 
   const vigBaseTxt = formatarVigencia(vigenciaBase)
   const vigCompTxt = formatarVigencia(vigenciaComparada)
@@ -179,10 +180,16 @@ export function avaliarSuperioridade(textoBase, textoComparado, tituloClausula =
   const numComp = extrairNumericos(textoComparado)
 
   // ── Comparação numérica ──
-  // Prioridade 1: percentuais (reajuste, adicional, etc.)
-  // Perspectiva da BASE: Inferior = base está abaixo da comparada (comparada exige mais)
-  //                      Superior = base já cobre mais que a comparada
-  if (numBase.percentuais.length > 0 && numComp.percentuais.length > 0) {
+  // Prioridade 1: percentuais (reajuste, adicional, etc.) — mas SÓ quando não
+  // há valores monetários divergentes disponíveis. Isso evita que um percentual
+  // incidental e idêntico nos dois textos (ex: desconto de 20% do PAT, presente
+  // tanto na cláusula de Auxílio Refeição do ACT quanto da CCT) mascare uma
+  // diferença real no valor em R$ do benefício, que é o dado substantivo.
+  const percDiferem = numBase.percentuais.length > 0 && numComp.percentuais.length > 0
+    && Math.abs(Math.max(...numBase.percentuais) - Math.max(...numComp.percentuais)) >= 0.01
+  const monetDisponveis = numBase.monetarios.length > 0 && numComp.monetarios.length > 0
+
+  if (numBase.percentuais.length > 0 && numComp.percentuais.length > 0 && (percDiferem || !monetDisponveis)) {
     const maxBase = Math.max(...numBase.percentuais)
     const maxComp = Math.max(...numComp.percentuais)
     const diff = maxComp - maxBase
@@ -354,12 +361,22 @@ function matchGrupoNeg(grupoA, grupoB) {
   const pairs = []
   for (const a of grupoA) {
     const tokConteudoA = tokenize(a.conteudo || '')
+    const tokTituloASin = new Set(tokenizeSin(a.titulo || ''))
     for (const b of grupoB) {
       const tokConteudoB = tokenize(b.conteudo || '')
       const curto = Math.min(tokConteudoA.length, tokConteudoB.length) < 10
 
       const scoreTitulo   = jaccardSin(a.titulo, b.titulo)
       const scoreConteudo = similaridade(a.conteudo, b.conteudo)
+
+      if (curto) {
+        // Exige ao menos 1 token (normalizado por sinônimo) em comum entre os
+        // títulos — evita parear temas totalmente distintos (ex: "Gratificação
+        // de Férias" com "PPR") só porque ambos têm conteúdo curto.
+        const tokTituloBSin = new Set(tokenizeSin(b.titulo || ''))
+        const overlap = [...tokTituloASin].some(t => tokTituloBSin.has(t))
+        if (!overlap) continue
+      }
 
       // Para textos curtos usa apenas título (com sinônimos); caso contrário, combinado
       const score = curto ? scoreTitulo : (scoreTitulo * 0.4 + scoreConteudo * 0.6)
