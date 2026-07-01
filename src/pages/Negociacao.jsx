@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from 'react'
 import { supabase } from '../services/supabase'
 import { useAuth } from '../hooks/useAuth'
-import { compararInstrumentos, avaliarSuperioridade, STATUS_CONFIG } from '../utils/comparacao'
+import { compararInstrumentosNeg, avaliarSuperioridade, STATUS_CONFIG } from '../utils/comparacao'
+import { toNumeroOrdinal } from '../utils/ordenacao'
 import CheckList from '../components/UI/CheckList'
 import StepCard from '../components/UI/StepCard'
 import * as XLSX from 'xlsx'
@@ -194,7 +195,17 @@ export default function Negociacao() {
     setResultado(null)
   }
 
-  // Filtro de instrumentos por fonte
+  function resetar() {
+    setStepAtivo(1); setConfirmados(new Set())
+    setSels({ empresas: [], operacoes: [], sindicatosLab: [], sindicatosPat: [] })
+    setBuscas({ emp: '', op: '', sindLab: '', sindPat: '' })
+    setFontesAtivas(new Set(['act', 'cct']))
+    setInstSelecionado({ pratica: '', act: '', cct: '', proposta: '' })
+    setResultado(null); setSelecionados(new Set()); setExpandidos(new Set()); setModoExpandido(false)
+    setBusca(''); setFonteBase(''); setOrdenacao('original'); setFonteOrdenacao('')
+  }
+
+
   function instsParaFonte(chave) {
     const cfg = FONTES_CONFIG[chave]
     if (!cfg) return instsPorSind
@@ -222,7 +233,7 @@ export default function Negociacao() {
       setFonteBase(baseEfetiva)
       const comparativos = {}
       for (const fc of comparadas) {
-        comparativos[fc] = compararInstrumentos(clausulasPorFonte[baseEfetiva], clausulasPorFonte[fc])
+        comparativos[fc] = compararInstrumentosNeg(clausulasPorFonte[baseEfetiva], clausulasPorFonte[fc])
       }
       setResultado({ clausulasPorFonte, comparativos, baseEfetiva, comparadas, fontesLista })
       setStatusAtivos(new Set(Object.keys(STATUS_CONFIG)))
@@ -300,11 +311,29 @@ export default function Negociacao() {
   const filtradoOrdenado = (() => {
     const arr = [...filtrado]
     const ord = Object.keys(STATUS_CONFIG)
-    // Função de chave: se uma fonte específica foi escolhida, ordena pelo status
-    // dessa fonte (av.status); senão usa o statusGeral (pior caso entre as fontes)
     const statusKey = r => {
       if (fonteOrdenacao && r.avaliacoes?.[fonteOrdenacao]) return r.avaliacoes[fonteOrdenacao].status
       return r.statusGeral
+    }
+    // Ordenação numérica por fonte: numFonte_asc / numFonte_desc
+    if (ordenacao.startsWith('num_') && resultado) {
+      const [, , fonte, dir] = ordenacao.split('_') // 'num_act_asc' → ['num','','act','asc'] ... na verdade 'num_act_asc'
+      // Extrair fonte e direção da string "num_{fonte}_{dir}"
+      const parts = ordenacao.replace(/^num_/, '').split('_')
+      const dir2 = parts.pop()   // 'asc' ou 'desc'
+      const fonteNum = parts.join('_') // 'act', 'cct', 'proposta', etc.
+      const getNum = r => {
+        if (!resultado) return 9999
+        if (fonteNum === resultado.baseEfetiva) {
+          return toNumeroOrdinal(r.clausulaBase?.numero)
+        }
+        const par = r.pares?.[fonteNum]
+        const clausB = par?.clausulaB || r.clausulaNova
+        return toNumeroOrdinal(clausB?.numero)
+      }
+      return dir2 === 'desc'
+        ? arr.sort((a, b) => getNum(b) - getNum(a))
+        : arr.sort((a, b) => getNum(a) - getNum(b))
     }
     switch (ordenacao) {
       case 'status':      return arr.sort((a, b) => ord.indexOf(statusKey(a)) - ord.indexOf(statusKey(b)))
@@ -456,9 +485,16 @@ export default function Negociacao() {
         mark.diff-add{background:#dcfce7;color:#166534;border-radius:2px;padding:0 1px}
       `}</style>
 
-      <div className="mb-6">
-        <h1 className="font-display font-bold text-2xl text-slate-800">🤝 Negociação Sindical</h1>
-        <p className="text-slate-500 text-sm mt-1">Compare ACTs, CCTs, prática interna e propostas sindicais — avalie superioridade cláusula a cláusula</p>
+      <div className="mb-6 flex items-start justify-between gap-4">
+        <div>
+          <h1 className="font-display font-bold text-2xl text-slate-800">🤝 Negociação Sindical</h1>
+          <p className="text-slate-500 text-sm mt-1">Compare ACTs, CCTs, prática interna e propostas sindicais — avalie superioridade cláusula a cláusula</p>
+        </div>
+        {confirmados.size > 0 && (
+          <button onClick={resetar} className="btn-secondary text-xs py-1.5 flex-shrink-0 mt-1">
+            ↺ Recomeçar
+          </button>
+        )}
       </div>
 
       {/* ── Passos de filtro ── */}
@@ -582,12 +618,22 @@ export default function Negociacao() {
           {/* Barra de controles */}
           <div className="flex gap-2 mb-3 flex-wrap items-center">
             <input className="input max-w-xs text-sm" placeholder="Buscar por título..." value={busca} onChange={e => setBusca(e.target.value)} />
-            <select className="input w-auto text-xs" value={ordenacao} onChange={e => setOrdenacao(e.target.value)}>
+            <select className="input w-auto text-xs" value={ordenacao} onChange={e => { setOrdenacao(e.target.value); setFonteOrdenacao('') }}>
               <option value="original">Ordem original</option>
               <option value="status">Por resultado (melhor → pior)</option>
               <option value="status_desc">Por resultado (pior → melhor)</option>
+              <optgroup label="Nº por fonte — crescente">
+                {resultado.fontesLista.map(fc => (
+                  <option key={`num_${fc}_asc`} value={`num_${fc}_asc`}>Nº {FONTES_CONFIG[fc]?.label} ↑</option>
+                ))}
+              </optgroup>
+              <optgroup label="Nº por fonte — decrescente">
+                {resultado.fontesLista.map(fc => (
+                  <option key={`num_${fc}_desc`} value={`num_${fc}_desc`}>Nº {FONTES_CONFIG[fc]?.label} ↓</option>
+                ))}
+              </optgroup>
             </select>
-            {ordenacao !== 'original' && resultado.comparadas.length > 1 && (
+            {ordenacao.startsWith('status') && resultado.comparadas.length > 1 && (
               <select className="input w-auto text-xs" value={fonteOrdenacao} onChange={e => setFonteOrdenacao(e.target.value)}>
                 <option value="">Considerar pior resultado entre as fontes</option>
                 {resultado.comparadas.map(fc => (

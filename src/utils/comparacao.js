@@ -8,6 +8,27 @@ const STOPWORDS = new Set([
   'não','qual','quais','quando','onde','quem','nos','lhe','lhes',
 ])
 
+// Mapa de sinônimos laborais: normaliza termos equivalentes antes do Jaccard
+// (forma canônica: valor do mapa)
+const SINONIMOS_LAB = {
+  // salário / reajuste
+  'reajuste': 'correcao', 'correcao': 'correcao', 'remuneracao': 'correcao', 'salarial': 'correcao',
+  // benefício alimentação
+  'refeicao': 'refeicao', 'alimentacao': 'refeicao', 'alimentar': 'refeicao', 'ticket': 'refeicao',
+  'auxilio': 'vale', 'vale': 'vale',
+  // combustível / transporte
+  'combustivel': 'combustivel', 'gasolina': 'combustivel', 'transporte': 'transporte',
+  // cesta
+  'cesta': 'cesta', 'basica': 'cesta',
+  // plano variável
+  'ppr': 'variavel', 'plr': 'variavel', 'participacao': 'variavel', 'resultado': 'variavel',
+  'gratificacao': 'variavel', 'bonus': 'variavel',
+  // jornada / banco
+  'banco': 'jornada', 'horas': 'jornada', 'jornada': 'jornada', 'horario': 'jornada',
+  // vigência
+  'vigencia': 'vigencia', 'periodo': 'vigencia', 'abrangencia': 'abrangencia',
+}
+
 function tokenize(text) {
   return text
     .toLowerCase()
@@ -15,6 +36,20 @@ function tokenize(text) {
     .replace(/[^a-z0-9\s]/g, ' ')
     .split(/\s+/)
     .filter(t => t.length > 2 && !STOPWORDS.has(t))
+}
+
+// tokenize com expansão de sinônimos — usado pelo matching da Negociação
+function tokenizeSin(text) {
+  return tokenize(text).map(t => SINONIMOS_LAB[t] || t)
+}
+
+function jaccardSin(textA, textB) {
+  const tA = new Set(tokenizeSin(textA || ''))
+  const tB = new Set(tokenizeSin(textB || ''))
+  if (tA.size === 0 && tB.size === 0) return 1
+  const inter = new Set([...tA].filter(x => tB.has(x)))
+  const union = new Set([...tA, ...tB])
+  return inter.size / union.size
 }
 
 function jaccard(setA, setB) {
@@ -145,6 +180,8 @@ export function avaliarSuperioridade(textoBase, textoComparado, tituloClausula =
 
   // ── Comparação numérica ──
   // Prioridade 1: percentuais (reajuste, adicional, etc.)
+  // Perspectiva da BASE: Inferior = base está abaixo da comparada (comparada exige mais)
+  //                      Superior = base já cobre mais que a comparada
   if (numBase.percentuais.length > 0 && numComp.percentuais.length > 0) {
     const maxBase = Math.max(...numBase.percentuais)
     const maxComp = Math.max(...numComp.percentuais)
@@ -157,14 +194,16 @@ export function avaliarSuperioridade(textoBase, textoComparado, tituloClausula =
       }
     }
     if (diff > 0) {
+      // comparada tem mais → base é inferior
       return {
-        status: 'Superior',
-        resumo: `A fonte comparada prevê ${maxComp.toFixed(2).replace('.', ',')}% contra ${maxBase.toFixed(2).replace('.', ',')}% da base — diferença de +${diffPct} p.p. em favor da comparada.${contextoVigencia}`,
+        status: 'Inferior',
+        resumo: `A base prevê ${maxBase.toFixed(2).replace('.', ',')}% e a comparada exige ${maxComp.toFixed(2).replace('.', ',')}% — diferença de +${diffPct} p.p. desfavorável à base.${contextoVigencia}`,
       }
     }
+    // comparada tem menos → base é superior
     return {
-      status: 'Inferior',
-      resumo: `A fonte comparada prevê ${maxComp.toFixed(2).replace('.', ',')}% contra ${maxBase.toFixed(2).replace('.', ',')}% da base — diferença de −${diffPct} p.p. desfavorável à comparada.${contextoVigencia}`,
+      status: 'Superior',
+      resumo: `A base prevê ${maxBase.toFixed(2).replace('.', ',')}% e a comparada indica ${maxComp.toFixed(2).replace('.', ',')}% — diferença de +${diffPct} p.p. em favor da base.${contextoVigencia}`,
     }
   }
 
@@ -181,14 +220,16 @@ export function avaliarSuperioridade(textoBase, textoComparado, tituloClausula =
       }
     }
     if (diff > 0) {
+      // comparada tem mais → base é inferior
       return {
-        status: 'Superior',
-        resumo: `A fonte comparada prevê ${fmt(maxComp)} contra ${fmt(maxBase)} da base — diferença de +${fmt(diff)} em favor da comparada.${contextoVigencia}`,
+        status: 'Inferior',
+        resumo: `A base prevê ${fmt(maxBase)} e a comparada exige ${fmt(maxComp)} — diferença de +${fmt(diff)} desfavorável à base.${contextoVigencia}`,
       }
     }
+    // comparada tem menos → base é superior
     return {
-      status: 'Inferior',
-      resumo: `A fonte comparada prevê ${fmt(maxComp)} contra ${fmt(maxBase)} da base — diferença de −${fmt(Math.abs(diff))} desfavorável à comparada.${contextoVigencia}`,
+      status: 'Superior',
+      resumo: `A base prevê ${fmt(maxBase)} e a comparada indica ${fmt(Math.abs(maxComp))} — diferença de +${fmt(Math.abs(diff))} em favor da base.${contextoVigencia}`,
     }
   }
 
@@ -286,6 +327,78 @@ export function compararInstrumentos(clausulasA, clausulasB) {
   // Estágio 2 — cláusulas regulares
   const regA = dedupA.filter(c => !isCCP(c)), regB = dedupB.filter(c => !isCCP(c))
   const { matched: regMatched, usedA: regUsedA, usedB: regUsedB } = matchGrupo(regA, regB, 0.30)
+  for (const { a, b, score } of regMatched)
+    resultado.push({ clausulaA: a, clausulaB: b, score, status: classificarSimilaridade(score, a.conteudo, b.conteudo) })
+  for (const c of regA)
+    if (!regUsedA.has(c.id))
+      resultado.push({ clausulaA: c, clausulaB: null, score: 0, status: { label: 'SUPRIMIDA', cls: 'bg-slate-100 text-slate-700', order: 2 } })
+  for (const c of regB)
+    if (!regUsedB.has(c.id))
+      resultado.push({ clausulaA: null, clausulaB: c, score: 0, status: { label: 'NOVA', cls: 'bg-purple-100 text-purple-800', order: 3 } })
+
+  return resultado
+}
+
+// ─── Comparação para Negociação Sindical ─────────────────────────────────────
+// Variante de compararInstrumentos otimizada para comparar ACT/CCT com
+// Prática Interna e Proposta Sindical, que costumam ter cláusulas com
+// conteúdo curto (ex: "Vale Refeição R$ 40,00" cadastradas como resumo).
+//
+// Diferenças em relação à versão padrão:
+// 1. Usa sinônimos laborais na comparação de títulos (jaccardSin)
+// 2. Quando o texto da comparada é curto (< 10 tokens), usa só o score de
+//    título (evitando que sc ≈ 0 rebaixe o score combinado)
+// 3. Threshold menor para textos curtos (0.25 vs 0.30)
+
+function matchGrupoNeg(grupoA, grupoB) {
+  const pairs = []
+  for (const a of grupoA) {
+    const tokConteudoA = tokenize(a.conteudo || '')
+    for (const b of grupoB) {
+      const tokConteudoB = tokenize(b.conteudo || '')
+      const curto = Math.min(tokConteudoA.length, tokConteudoB.length) < 10
+
+      const scoreTitulo   = jaccardSin(a.titulo, b.titulo)
+      const scoreConteudo = similaridade(a.conteudo, b.conteudo)
+
+      // Para textos curtos usa apenas título (com sinônimos); caso contrário, combinado
+      const score = curto ? scoreTitulo : (scoreTitulo * 0.4 + scoreConteudo * 0.6)
+      const threshold = curto ? 0.25 : 0.30
+
+      if (score > threshold) pairs.push({ a, b, score })
+    }
+  }
+  pairs.sort((x, y) => y.score - x.score)
+  const usedA = new Set(), usedB = new Set()
+  const matched = []
+  for (const { a, b, score } of pairs) {
+    if (usedA.has(a.id) || usedB.has(b.id)) continue
+    usedA.add(a.id); usedB.add(b.id)
+    matched.push({ a, b, score })
+  }
+  return { matched, usedA, usedB }
+}
+
+export function compararInstrumentosNeg(clausulasA, clausulasB) {
+  const dedupA = deduplicar(clausulasA)
+  const dedupB = deduplicar(clausulasB)
+  const resultado = []
+
+  // Estágio 1 — cláusulas CCP adendo (1a–14a)
+  const ccpA = dedupA.filter(isCCP), ccpB = dedupB.filter(isCCP)
+  const { matched: ccpMatched, usedA: ccpUsedA, usedB: ccpUsedB } = matchGrupoNeg(ccpA, ccpB)
+  for (const { a, b, score } of ccpMatched)
+    resultado.push({ clausulaA: a, clausulaB: b, score, status: classificarSimilaridade(score, a.conteudo, b.conteudo) })
+  for (const c of ccpA)
+    if (!ccpUsedA.has(c.id))
+      resultado.push({ clausulaA: c, clausulaB: null, score: 0, status: { label: 'SUPRIMIDA', cls: 'bg-slate-100 text-slate-700', order: 2 } })
+  for (const c of ccpB)
+    if (!ccpUsedB.has(c.id))
+      resultado.push({ clausulaA: null, clausulaB: c, score: 0, status: { label: 'NOVA', cls: 'bg-purple-100 text-purple-800', order: 3 } })
+
+  // Estágio 2 — cláusulas regulares
+  const regA = dedupA.filter(c => !isCCP(c)), regB = dedupB.filter(c => !isCCP(c))
+  const { matched: regMatched, usedA: regUsedA, usedB: regUsedB } = matchGrupoNeg(regA, regB)
   for (const { a, b, score } of regMatched)
     resultado.push({ clausulaA: a, clausulaB: b, score, status: classificarSimilaridade(score, a.conteudo, b.conteudo) })
   for (const c of regA)
