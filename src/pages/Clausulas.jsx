@@ -29,7 +29,6 @@ export default function Clausulas() {
 
   // Resultado
   const [clausulas, setClausulas] = useState([])
-  const [subcatsDisponiveis, setSubcatsDisponiveis] = useState([])
   const [loading, setLoading] = useState(false)
   const [ordem, setOrdem] = useState('padrao')
   const [expandidos, setExpandidos] = useState(new Set())
@@ -146,26 +145,44 @@ export default function Clausulas() {
     }
   }, [instsPorSind.length])
 
-  // Subcategorias disponíveis
-  useEffect(() => {
-    if (!sels.instrumento || !sels.categoria) { setSubcatsDisponiveis([]); return }
-    supabase.from('clausulas').select('subcategoria')
-      .eq('instrumento_id', sels.instrumento).eq('user_id', user.id).eq('categoria', sels.categoria)
-      .then(({ data }) => {
-        setSubcatsDisponiveis([...new Set((data || []).map(c => c.subcategoria).filter(Boolean))].sort())
-      })
-  }, [sels.instrumento, sels.categoria])
-
-  // Buscar cláusulas
+  // Buscar cláusulas — o filtro de categoria/subcategoria é aplicado considerando TODAS as
+  // classificações da cláusula (principal + adicionais, vindas de clausula_categorias), não
+  // só a coluna clausulas.categoria/subcategoria. Isso é o que permite uma mesma cláusula
+  // aparecer em mais de um filtro quando ela trata de mais de um tema.
   useEffect(() => {
     if (!sels.instrumento) { setClausulas([]); return }
     setLoading(true)
     let q = supabase.from('clausulas').select('*').eq('instrumento_id', sels.instrumento).eq('user_id', user.id)
-    if (sels.categoria)    q = q.eq('categoria', sels.categoria)
-    if (sels.subcategoria) q = q.eq('subcategoria', sels.subcategoria)
-    if (sels.busca)        q = q.or(`titulo.ilike.%${sels.busca}%,conteudo.ilike.%${sels.busca}%`)
-    q.then(({ data }) => {
-      setClausulas(ordenarClausulas(data || []))
+    if (sels.busca) q = q.or(`titulo.ilike.%${sels.busca}%,conteudo.ilike.%${sels.busca}%`)
+    q.then(async ({ data }) => {
+      const base = data || []
+      const ids = base.map(c => c.id)
+      let classifsPorClausula = {}
+      if (ids.length > 0) {
+        const { data: classifs } = await supabase
+          .from('clausula_categorias')
+          .select('clausula_id, categoria, subcategoria')
+          .in('clausula_id', ids)
+        for (const cl of (classifs || [])) {
+          if (!classifsPorClausula[cl.clausula_id]) classifsPorClausula[cl.clausula_id] = []
+          classifsPorClausula[cl.clausula_id].push({ categoria: cl.categoria, subcategoria: cl.subcategoria })
+        }
+      }
+      const comClassificacoes = base.map(c => ({
+        ...c,
+        // Fallback para cláusulas ainda não migradas para clausula_categorias: usa a
+        // classificação da própria coluna categoria/subcategoria.
+        classificacoes: classifsPorClausula[c.id]?.length
+          ? classifsPorClausula[c.id]
+          : (c.categoria ? [{ categoria: c.categoria, subcategoria: c.subcategoria }] : []),
+      }))
+      const filtradas = comClassificacoes.filter(c => {
+        if (!sels.categoria) return true
+        return c.classificacoes.some(cl =>
+          cl.categoria === sels.categoria && (!sels.subcategoria || cl.subcategoria === sels.subcategoria)
+        )
+      })
+      setClausulas(ordenarClausulas(filtradas))
       setLoading(false)
       setSelecionados(new Set())
     })
@@ -298,9 +315,9 @@ export default function Clausulas() {
             <label className="label">Subcategoria</label>
             <select className="input" value={sels.subcategoria}
               onChange={e => setSels(prev => ({ ...prev, subcategoria: e.target.value }))}
-              disabled={!sels.categoria || subcatsDisponiveis.length === 0}>
+              disabled={!sels.categoria}>
               <option value="">Todas</option>
-              {subcatsDisponiveis.map(s => <option key={s}>{s}</option>)}
+              {(CATEGORIAS[sels.categoria] || []).map(s => <option key={s}>{s}</option>)}
             </select>
           </div>
           <div>
@@ -371,6 +388,11 @@ export default function Clausulas() {
                           {c.categoria}
                         </Badge>
                         {c.subcategoria && <span className="text-xs text-slate-400">{c.subcategoria}</span>}
+                        {(c.classificacoes || []).filter(cl => cl.categoria !== c.categoria || cl.subcategoria !== c.subcategoria).map((cl, i) => (
+                          <span key={i} className="text-xs px-2 py-0.5 rounded-full bg-slate-50 text-slate-400 border border-slate-200">
+                            + {cl.categoria} · {cl.subcategoria}
+                          </span>
+                        ))}
                       </div>
                       <p className="font-medium text-slate-800">{c.titulo}</p>
                       {(c.tags || []).length > 0 && (

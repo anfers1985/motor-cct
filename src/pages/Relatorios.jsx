@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { supabase } from '../services/supabase'
 import { useAuth } from '../hooks/useAuth'
 import { vigenciaStatus } from '../utils/formatters'
-import { CATEGORIAS, normalizarSubcategoria, SUBCATEGORIA_NORMALIZACAO } from '../utils/categorias'
+import { CATEGORIAS } from '../utils/categorias'
 import { gerarExcelMultiplo, gerarExcelInstrumento } from '../services/reports/excelReport'
 import { gerarPDFInstrumento } from '../services/reports/pdfReport'
 import CheckList from '../components/UI/CheckList'
@@ -183,40 +183,55 @@ export default function Relatorios() {
     setPreview({ count: total, n: insts.length })
   }
 
+  // Busca as cláusulas dos instrumentos selecionados e aplica o filtro de categoria/
+  // subcategoria considerando TODAS as classificações de cada cláusula (principal +
+  // adicionais, vindas de clausula_categorias) — não só a coluna categoria/subcategoria
+  // da cláusula. Assim uma cláusula que trata de dois temas aparece nos dois filtros.
+  // Como o dicionário canônico (utils/categorias.js) já é a única fonte de vocabulário
+  // usada em toda a aplicação, não é mais necessário "expandir variações conhecidas".
   async function buscarDados() {
     const insts = filtrarParaExportar()
     if (!insts.length) return { insts: [], clausulas: [] }
 
-    // Expande subcategorias selecionadas para incluir variações conhecidas da IA
-    // Ex: usuário seleciona "Reajuste" → busca também "Reajuste Salarial"
-    let subcatsFiltro = sels.subcategorias
-    if (subcatsFiltro.length > 0) {
-      const expandidas = new Set(subcatsFiltro)
-      // Adiciona as variantes que normalizam para as selecionadas
-      Object.entries(SUBCATEGORIA_NORMALIZACAO).forEach(([variante, canonico]) => {
-        if (expandidas.has(canonico)) {
-          // Adiciona a variante original com capitalização correta
-          // (o banco guarda o valor que a IA gerou, não o normalizado)
-          expandidas.add(variante.charAt(0).toUpperCase() + variante.slice(1))
-          // Também adiciona o mapeamento inverso capitalizado
-        }
-      })
-      subcatsFiltro = [...expandidas]
-    }
+    const temFiltro = sels.categorias.length > 0 || sels.subcategorias.length > 0
 
     let clausulas = []
     for (const inst of insts) {
-      let q = supabase.from('clausulas').select('*').eq('instrumento_id', inst.id).eq('user_id', user.id)
-      if (sels.categorias.length > 0)    q = q.in('categoria', sels.categorias)
-      if (subcatsFiltro.length > 0)      q = q.in('subcategoria', subcatsFiltro)
-      const { data } = await q
-      // Aplica filtro local adicional: normaliza subcategoria da cláusula e verifica
-      const dados = (data || []).filter(c => {
-        if (sels.subcategorias.length === 0) return true
-        const normalizada = normalizarSubcategoria(c.subcategoria)
-        return sels.subcategorias.includes(c.subcategoria) || sels.subcategorias.includes(normalizada)
-      })
-      clausulas = clausulas.concat(dados)
+      const { data } = await supabase.from('clausulas').select('*').eq('instrumento_id', inst.id).eq('user_id', user.id)
+      const base = data || []
+      const ids = base.map(c => c.id)
+
+      // Busca sempre as classificações completas — usadas tanto para filtrar (quando há
+      // filtro de categoria/subcategoria) quanto para exibir "Categorias Adicionais" no
+      // relatório final (mesmo sem filtro).
+      let classifsPorClausula = {}
+      if (ids.length > 0) {
+        const { data: classifs } = await supabase
+          .from('clausula_categorias')
+          .select('clausula_id, categoria, subcategoria')
+          .in('clausula_id', ids)
+        for (const cl of (classifs || [])) {
+          if (!classifsPorClausula[cl.clausula_id]) classifsPorClausula[cl.clausula_id] = []
+          classifsPorClausula[cl.clausula_id].push({ categoria: cl.categoria, subcategoria: cl.subcategoria })
+        }
+      }
+
+      const comClassificacoes = base.map(c => ({
+        ...c,
+        // Fallback para cláusulas ainda não migradas para clausula_categorias
+        classificacoes: classifsPorClausula[c.id]?.length
+          ? classifsPorClausula[c.id]
+          : (c.categoria ? [{ categoria: c.categoria, subcategoria: c.subcategoria }] : []),
+      }))
+
+      const filtradas = temFiltro
+        ? comClassificacoes.filter(c => c.classificacoes.some(cl =>
+            (sels.categorias.length === 0 || sels.categorias.includes(cl.categoria)) &&
+            (sels.subcategorias.length === 0 || sels.subcategorias.includes(cl.subcategoria))
+          ))
+        : comClassificacoes
+
+      clausulas = clausulas.concat(filtradas)
     }
     return { insts, clausulas }
   }

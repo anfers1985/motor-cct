@@ -6,7 +6,7 @@ import { extrairClausulas, getAIConfig } from '../services/ai'
 import { extractPDFText, getPDFBase64 } from '../services/extractors/pdf'
 import { extractDOCXText } from '../services/extractors/docx'
 import { extractExcelText } from '../services/extractors/excel'
-import { CATEGORIAS } from '../utils/categorias'
+import { CATEGORIAS, classificar } from '../utils/categorias'
 import Modal from '../components/UI/Modal'
 
 const TIPOS = ['ACT','CCT','Aditivo','Acordo Extrajudicial','Prática Interna','Proposta Sindical']
@@ -28,7 +28,11 @@ function ModalRevisao({ open, onClose, clausulas: inicial, onConfirmar, instNome
 
   useEffect(() => {
     if (open && inicial) {
-      setClausulas(inicial.map((c, i) => ({ ...c, _idx: i })))
+      setClausulas(inicial.map((c, i) => ({
+        ...c,
+        categorias_adicionais: c.categorias_adicionais || [],
+        _idx: i,
+      })))
       setExpandidos(new Set())
       setExpandidosTudo(false)
     }
@@ -56,6 +60,33 @@ function ModalRevisao({ open, onClose, clausulas: inicial, onConfirmar, instNome
         ? { ...c, [campo]: valor, ...(campo === 'categoria' ? { subcategoria: '' } : {}) }
         : c
     ))
+  }
+
+  // ── Classificações adicionais (cláusula que trata de mais de um tema) ──
+  function adicionarClassificacao(idx) {
+    setClausulas(prev => prev.map(c =>
+      c._idx === idx
+        ? { ...c, categorias_adicionais: [...(c.categorias_adicionais || []), { categoria: '', subcategoria: '' }] }
+        : c
+    ))
+  }
+
+  function atualizarClassificacaoAdicional(idx, i, campo, valor) {
+    setClausulas(prev => prev.map(c => {
+      if (c._idx !== idx) return c
+      const lista = [...(c.categorias_adicionais || [])]
+      lista[i] = { ...lista[i], [campo]: valor, ...(campo === 'categoria' ? { subcategoria: '' } : {}) }
+      return { ...c, categorias_adicionais: lista }
+    }))
+  }
+
+  function removerClassificacaoAdicional(idx, i) {
+    setClausulas(prev => prev.map(c => {
+      if (c._idx !== idx) return c
+      const lista = [...(c.categorias_adicionais || [])]
+      lista.splice(i, 1)
+      return { ...c, categorias_adicionais: lista }
+    }))
   }
 
   async function confirmar() {
@@ -241,6 +272,55 @@ function ModalRevisao({ open, onClose, clausulas: inicial, onConfirmar, instNome
                                 value={c.vigencia_especifica || ''}
                                 onChange={e => atualizar(c._idx, 'vigencia_especifica', e.target.value)}
                               />
+                            </div>
+                          </div>
+
+                          {/* Classificações adicionais — quando a cláusula trata de mais de um tema */}
+                          <div className="mt-4 pt-3 border-t border-slate-200">
+                            <div className="flex items-center justify-between mb-2">
+                              <p className="text-xs font-medium text-slate-500">
+                                Classificações adicionais <span className="text-slate-400 font-normal">(opcional — use se a cláusula tratar de mais de um tema)</span>
+                              </p>
+                              <button
+                                type="button"
+                                className="text-xs text-brand-600 hover:underline"
+                                onClick={() => adicionarClassificacao(c._idx)}
+                              >
+                                + adicionar classificação
+                              </button>
+                            </div>
+                            {(c.categorias_adicionais || []).length === 0 && (
+                              <p className="text-xs text-slate-300">Nenhuma classificação adicional.</p>
+                            )}
+                            <div className="space-y-2">
+                              {(c.categorias_adicionais || []).map((extra, i) => (
+                                <div key={i} className="flex gap-2 items-center">
+                                  <select
+                                    className="flex-1 text-xs border border-slate-200 bg-white text-slate-700 rounded px-1.5 py-1 focus:border-brand-400 outline-none"
+                                    value={extra.categoria || ''}
+                                    onChange={e => atualizarClassificacaoAdicional(c._idx, i, 'categoria', e.target.value)}
+                                  >
+                                    <option value="">— categoria —</option>
+                                    {categorias.map(cat => <option key={cat}>{cat}</option>)}
+                                  </select>
+                                  <select
+                                    className="flex-1 text-xs border border-slate-200 bg-white text-slate-700 rounded px-1.5 py-1 focus:border-brand-400 outline-none"
+                                    value={extra.subcategoria || ''}
+                                    onChange={e => atualizarClassificacaoAdicional(c._idx, i, 'subcategoria', e.target.value)}
+                                    disabled={!extra.categoria}
+                                  >
+                                    <option value="">— subcategoria —</option>
+                                    {todasSubcats(extra.categoria).map(s => <option key={s}>{s}</option>)}
+                                  </select>
+                                  <button
+                                    type="button"
+                                    className="text-xs text-red-500 hover:underline px-1"
+                                    onClick={() => removerClassificacaoAdicional(c._idx, i)}
+                                  >
+                                    remover
+                                  </button>
+                                </div>
+                              ))}
                             </div>
                           </div>
                         </td>
@@ -467,30 +547,73 @@ export default function Instrumentos() {
   }
 
   // ── Abrir revisão de instrumento já processado ──
+  // Recarrega também as classificações adicionais (tabela clausula_categorias), se existirem.
   async function abrirRevisao(inst) {
     setLog(l => ({ ...l, [inst.id]: 'Carregando cláusulas...' }))
-    const { data } = await supabase.from('clausulas').select('*').eq('instrumento_id', inst.id).order('numero')
+    const { data: clausulasData } = await supabase.from('clausulas').select('*').eq('instrumento_id', inst.id).order('numero')
+    const ids = (clausulasData || []).map(c => c.id)
+
+    let extrasPorClausula = {}
+    if (ids.length > 0) {
+      const { data: classifs } = await supabase
+        .from('clausula_categorias')
+        .select('clausula_id, categoria, subcategoria')
+        .in('clausula_id', ids)
+        .eq('principal', false)
+      for (const cl of (classifs || [])) {
+        if (!extrasPorClausula[cl.clausula_id]) extrasPorClausula[cl.clausula_id] = []
+        extrasPorClausula[cl.clausula_id].push({ categoria: cl.categoria, subcategoria: cl.subcategoria })
+      }
+    }
+
+    const comExtras = (clausulasData || []).map(c => ({ ...c, categorias_adicionais: extrasPorClausula[c.id] || [] }))
     setLog(l => ({ ...l, [inst.id]: '' }))
-    setRevisao({ open: true, clausulas: data || [], instId: inst.id, instNome: inst.nome })
+    setRevisao({ open: true, clausulas: comExtras, instId: inst.id, instNome: inst.nome })
   }
 
   // ── Confirmar revisão e salvar no banco ──
+  // Salva a classificação principal em clausulas.categoria/subcategoria (cache, compatível
+  // com telas antigas) e TODAS as classificações (principal + adicionais) em clausula_categorias,
+  // que é a fonte usada por filtros/relatórios para permitir 1 cláusula em várias categorias.
   async function confirmarRevisao(clausulasRevisadas) {
     const { instId } = revisao
 
-    // Apaga cláusulas antigas e insere as revisadas
+    // Apaga cláusulas antigas — clausula_categorias é apagada em cascata (FK on delete cascade)
     await supabase.from('clausulas').delete().eq('instrumento_id', instId)
-    const rows = clausulasRevisadas.map(({ _idx, ...c }) => ({
+
+    const rows = clausulasRevisadas.map(({ _idx, categorias_adicionais, ...c }) => ({
       ...c,
       instrumento_id: instId,
       user_id: user.id,
       tags: c.tags || [],
     }))
-    const { error: insertError } = await supabase.from('clausulas').insert(rows)
+    const { data: inseridas, error: insertError } = await supabase.from('clausulas').insert(rows).select('id')
     if (insertError) {
       alert('Erro ao salvar cláusulas: ' + insertError.message)
       return
     }
+
+    // Monta as linhas de clausula_categorias (principal + adicionais) na mesma ordem do insert
+    const classifRows = []
+    clausulasRevisadas.forEach((c, i) => {
+      const clausulaId = inseridas?.[i]?.id
+      if (!clausulaId) return
+      if (c.categoria) {
+        classifRows.push({ clausula_id: clausulaId, user_id: user.id, categoria: c.categoria, subcategoria: c.subcategoria || '', principal: true })
+      }
+      ;(c.categorias_adicionais || []).forEach(extra => {
+        if (extra.categoria && extra.subcategoria) {
+          classifRows.push({ clausula_id: clausulaId, user_id: user.id, categoria: extra.categoria, subcategoria: extra.subcategoria, principal: false })
+        }
+      })
+    })
+    if (classifRows.length > 0) {
+      const { error: classifError } = await supabase.from('clausula_categorias').insert(classifRows)
+      if (classifError) {
+        alert('Cláusulas salvas, mas houve erro ao salvar as classificações adicionais (rode a migração sql_updates/002_multi_categoria.sql se ainda não rodou): ' + classifError.message)
+      }
+    }
+
     const { error: updError } = await supabase.from('instrumentos').update({ status_processamento: 'processado' }).eq('id', instId)
     if (updError) {
       alert('Cláusulas salvas, mas houve erro ao atualizar o status do instrumento: ' + updError.message)

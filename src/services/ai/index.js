@@ -1,5 +1,9 @@
 // Motor CCT — Roteador de provedores de IA
 // v1.5.1 — Fix: erros visíveis, suporte gemini-2.5-flash (thinking), callback de progresso
+// v1.6 — Taxonomia de categorias/subcategorias ampliada + normalização automática da
+//        classificação retornada pela IA + suporte a múltiplas classificações por cláusula
+
+import { CATEGORIAS, classificar } from '../../utils/categorias'
 
 export const PROVEDORES = {
   gemini: { label: 'Google Gemini', modelo_padrao: 'gemini-2.5-flash', suporta_pdf_nativo: true },
@@ -23,7 +27,14 @@ export function saveAIConfig(config) {
   localStorage.setItem('motor_cct_ai_config', JSON.stringify(config))
 }
 
-const PROMPT_BASE = (texto) => `Você é especialista em direito do trabalho brasileiro com profundo conhecimento em CCT e ACT.
+// Monta o bloco "CATEGORIA → subcategorias" a partir da taxonomia canônica única
+// (utils/categorias.js), garantindo que o prompt nunca fique dessincronizado do
+// vocabulário usado no resto da aplicação (dropdowns, filtros, relatórios).
+const VOCABULARIO_TAXONOMIA = Object.entries(CATEGORIAS)
+  .map(([categoria, subcats]) => `• ${categoria}:\n  ${subcats.join(' | ')}`)
+  .join('\n\n')
+
+const PROMPT_BASE = (texto) => `Você é especialista em direito do trabalho brasileiro com profundo conhecimento em CCT, ACT, práticas internas e propostas sindicais.
 
 TAREFA: Extraia TODAS as cláusulas do trecho de instrumento coletivo abaixo.
 
@@ -41,26 +52,29 @@ REGRAS OBRIGATÓRIAS:
 
 3. NUMERAÇÃO: use o ordinal exato: "PRIMEIRA", "DÉCIMA SEGUNDA", "1a", "2a" etc.
 
-4. CATEGORIAS (use exatamente uma):
-   Remuneração | Jornada de Trabalho | Benefícios | Saúde e Segurança | Estabilidade e Garantias | FGTS e Rescisão | Relações Sindicais | Penalidades | Capacitação | Igualdade e Diversidade | Disposições Gerais
+4. CLASSIFICAÇÃO (categoria + subcategoria) — USE SOMENTE O VOCABULÁRIO CONTROLADO ABAIXO.
+   NUNCA invente uma categoria ou subcategoria nova, nunca crie variações de grafia
+   (singular/plural, com/sem hífen, sinônimos). Se nenhuma opção encaixar perfeitamente,
+   escolha a mais próxima semanticamente — nunca deixe em branco e nunca escreva um texto
+   fora da lista.
 
-5. SUBCATEGORIA: use SEMPRE uma subcategoria do vocabulário controlado abaixo. Se nenhuma encaixar perfeitamente, use a mais próxima. NUNCA invente variações novas.
-   Vocabulário de subcategorias:
-   Piso Salarial | Reajuste | PLR/PPR | Gratificação | Gratificação por Tempo de Serviço | Adicional de Função | Adicional Noturno | Equiparação Salarial | Comissão | 13º Salário | Comprovante de Pagamento | Descontos em Folha |
-   Banco de Horas | Hora Extra | Duração da Jornada | Compensação de Jornada | Controle de Ponto | Trabalho Noturno | Sobreaviso | Intervalo Intrajornada | Abono de Faltas | Flexibilidade para Estudantes |
-   Auxílio Alimentação | Vale-Alimentação | Vale-Refeição | Vale-Transporte | Cesta Básica | Plano de Saúde | Plano Odontológico | Seguro de Vida e Auxílio Funeral | Auxílio Farmácia | Auxílio Doença/Acidente | Empréstimos Consignados | Manutenção de Benefícios |
-   EPI | Exames Médicos | Adicionais de Insalubridade/Periculosidade | CIPA | PCMSO/PPRA/PGR | Ergonomia | Prevenção de Acidentes e Doenças | Uniformes | Treinamento e Informação | Direito de Recusa |
-   Pré-Aposentadoria | Aviso Prévio | Estabilidade Gestante | Estabilidade Pós-Acidente/Doença Profissional | Dirigente Sindical |
-   FGTS | Multa Rescisória | Verbas Rescisórias | Homologação |
-   Férias | Abono de Férias | Licença Maternidade | Licença Paternidade |
-   Contribuição Assistencial | Garantias a Diretores Sindicais | Informações Sindicais | Resolução de Conflitos | Acesso do Sindicato ao Local de Trabalho |
-   Multa por Descumprimento | Cláusula Penal |
-   Vigência | Abrangência | Hierarquia de Normas | Condições Gerais | Outras
+   Vocabulário controlado (categoria → subcategorias válidas):
+${VOCABULARIO_TAXONOMIA}
+
+5. CLASSIFICAÇÃO MÚLTIPLA (quando a cláusula trata de mais de um tema central):
+   - Preencha "categoria"/"subcategoria" com a classificação PRINCIPAL (o tema predominante).
+   - Se — e somente se — a cláusula tratar substantivamente de outro tema além do principal
+     (não uma menção de passagem), adicione esse(s) tema(s) extra em "categorias_adicionais",
+     usando o MESMO vocabulário controlado acima. Use no máximo 2 itens em
+     "categorias_adicionais". Na dúvida, não adicione — prefira deixar só a principal.
+   - Exemplo: uma cláusula que reajusta o vale-transporte E também trata de contribuição
+     assistencial deve ter categoria/subcategoria principal = Benefícios/Vale-Transporte, e
+     categorias_adicionais = [{"categoria":"Relações Sindicais e Representação","subcategoria":"Contribuição Assistencial"}]
 
 6. OBSERVAÇÕES: escreva 1-2 frases sobre o impacto prático para o empregador/RH
 
 7. SAÍDA OBRIGATÓRIA: retorne APENAS um array JSON válido. Absolutamente nenhum texto antes ou depois. Sem markdown. Sem explicações.
-   Formato: [{"numero":"PRIMEIRA","titulo":"...","conteudo":"...","categoria":"...","subcategoria":"...","valor_monetario":null,"percentual":null,"vigencia_especifica":null,"observacoes":"..."},...]
+   Formato: [{"numero":"PRIMEIRA","titulo":"...","conteudo":"...","categoria":"...","subcategoria":"...","categorias_adicionais":[],"valor_monetario":null,"percentual":null,"vigencia_especifica":null,"observacoes":"..."},...]
 
 TRECHO DO DOCUMENTO:
 ${texto}`
@@ -98,6 +112,32 @@ function parseJSON(raw) {
     } catch {}
     throw new Error(`JSON inválido na resposta da IA. Primeiros 300 chars: "${text.slice(start, start + 300)}"`)
   }
+}
+
+// Normaliza a(s) classificação(ões) de cada cláusula retornada pela IA contra a taxonomia
+// canônica (utils/categorias.js). É a última barreira de defesa antes da tela de revisão:
+// mesmo que o provedor de IA não siga o vocabulário controlado à risca, o texto que chega
+// no modal de revisão já vem padronizado. Cláusulas cuja subcategoria não seja reconhecível
+// ficam com categoria/subcategoria vazias (o modal já sinaliza isso visualmente) em vez de
+// entrar no banco com um rótulo inventado.
+function normalizarClausulas(lista) {
+  return (lista || []).map(c => {
+    const principal = classificar(c.categoria, c.subcategoria)
+    const adicionais = (c.categorias_adicionais || [])
+      .map(a => classificar(a.categoria, a.subcategoria))
+      .filter(Boolean)
+      // remove duplicatas e qualquer item igual à classificação principal
+      .filter((a, i, arr) =>
+        !(principal && a.categoria === principal.categoria && a.subcategoria === principal.subcategoria) &&
+        arr.findIndex(x => x.categoria === a.categoria && x.subcategoria === a.subcategoria) === i
+      )
+    return {
+      ...c,
+      categoria: principal?.categoria || '',
+      subcategoria: principal?.subcategoria || '',
+      categorias_adicionais: adicionais,
+    }
+  })
 }
 
 // Pré-processa texto inserindo \n\n antes de cada CLÁUSULA
@@ -330,24 +370,35 @@ export async function extrairClausulas(texto, { isPDF = false, pdfBase64 = null,
     throw new Error('Configure um provedor de IA nas Configurações antes de extrair cláusulas.')
   }
 
+  let resultado
   switch (config.provedor) {
     case 'gemini':
-      return callGemini(config, texto, onProgress)
+      resultado = await callGemini(config, texto, onProgress)
+      break
     case 'claude':
-      return callClaude(config, texto, isPDF, pdfBase64, onProgress)
+      resultado = await callClaude(config, texto, isPDF, pdfBase64, onProgress)
+      break
     case 'openai':
-      return callOpenAICompat(config, texto, 'https://api.openai.com/v1/chat/completions', onProgress)
+      resultado = await callOpenAICompat(config, texto, 'https://api.openai.com/v1/chat/completions', onProgress)
+      break
     case 'groq':
-      return callOpenAICompat(config, texto, 'https://api.groq.com/openai/v1/chat/completions', onProgress)
+      resultado = await callOpenAICompat(config, texto, 'https://api.groq.com/openai/v1/chat/completions', onProgress)
+      break
     case 'nvidia':
-      return callOpenAICompat(config, texto, 'https://integrate.api.nvidia.com/v1/chat/completions', onProgress)
+      resultado = await callOpenAICompat(config, texto, 'https://integrate.api.nvidia.com/v1/chat/completions', onProgress)
+      break
     case 'mistral':
-      return callOpenAICompat(config, texto, 'https://api.mistral.ai/v1/chat/completions', onProgress)
+      resultado = await callOpenAICompat(config, texto, 'https://api.mistral.ai/v1/chat/completions', onProgress)
+      break
     case 'cohere':
-      return callCohere(config, texto, onProgress)
+      resultado = await callCohere(config, texto, onProgress)
+      break
     default:
       throw new Error(`Provedor desconhecido: ${config.provedor}`)
   }
+  // Normaliza categoria/subcategoria (e classificações adicionais) contra a taxonomia
+  // canônica, independentemente de qual provedor de IA gerou o resultado.
+  return normalizarClausulas(resultado)
 }
 
 export async function testarConexao(config) {

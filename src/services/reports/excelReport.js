@@ -28,6 +28,13 @@ function conteudoCompleto(c) {
   return prefixo + (c.conteudo || '')
 }
 
+// Formata as classificações adicionais (cláusula que trata de mais de um tema) para exibição
+// em uma única célula: "Categoria A · Subcategoria A; Categoria B · Subcategoria B"
+function categoriasAdicionaisTexto(c) {
+  const extras = (c.classificacoes || []).filter(cl => cl.categoria !== c.categoria || cl.subcategoria !== c.subcategoria)
+  return extras.map(cl => `${cl.categoria} · ${cl.subcategoria}`).join('; ')
+}
+
 export async function gerarExcelInstrumento(instrumento, clausulas, empresa, operacao, sindicatoLaboral, sindicatoPatronal) {
   const wb = XLSX.utils.book_new()
   const status = statusVigencia(instrumento?.vigencia_fim)
@@ -54,6 +61,7 @@ export async function gerarExcelInstrumento(instrumento, clausulas, empresa, ope
     'Título da Cláusula': c.titulo || '',
     'Categoria': c.categoria || '',
     'Subcategoria': normalizarSubcategoria(c.subcategoria) || '',
+    'Categorias Adicionais': categoriasAdicionaisTexto(c),
     'Conteúdo Integral da Cláusula': conteudoCompleto(c),
     'Tags': (c.tags || []).join(', '),
     'Observações / Contextualização para o Usuário': c.observacoes || '',
@@ -65,7 +73,7 @@ export async function gerarExcelInstrumento(instrumento, clausulas, empresa, ope
     { wch: 50 }, { wch: 18 }, { wch: 50 }, { wch: 18 },
     { wch: 28 }, { wch: 22 }, { wch: 12 }, { wch: 40 },
     { wch: 14 }, { wch: 14 }, { wch: 14 },
-    { wch: 22 }, { wch: 45 }, { wch: 25 }, { wch: 32 },
+    { wch: 22 }, { wch: 45 }, { wch: 25 }, { wch: 32 }, { wch: 35 },
     { wch: 120 }, { wch: 25 }, { wch: 80 },
   ]
   XLSX.utils.book_append_sheet(wb, ws, 'Cláusulas')
@@ -127,6 +135,7 @@ export async function gerarExcelMultiplo(instrumentos, todasClausulas, empresas,
       'Título da Cláusula': c.titulo || '',
       'Categoria': c.categoria || '',
       'Subcategoria': normalizarSubcategoria(c.subcategoria) || '',
+      'Categorias Adicionais': categoriasAdicionaisTexto(c),
       'Conteúdo Integral da Cláusula': conteudoCompleto(c),
       'Tags': (c.tags || []).join(', '),
       'Observações / Contextualização para o Usuário': c.observacoes || '',
@@ -138,7 +147,7 @@ export async function gerarExcelMultiplo(instrumentos, todasClausulas, empresas,
     { wch: 40 }, { wch: 18 }, { wch: 28 }, { wch: 15 }, { wch: 8 },
     { wch: 50 }, { wch: 50 }, { wch: 12 }, { wch: 40 },
     { wch: 14 }, { wch: 14 }, { wch: 14 },
-    { wch: 22 }, { wch: 45 }, { wch: 25 }, { wch: 32 },
+    { wch: 22 }, { wch: 45 }, { wch: 25 }, { wch: 32 }, { wch: 35 },
     { wch: 120 }, { wch: 25 }, { wch: 80 },
   ]
   XLSX.utils.book_append_sheet(wb, ws, 'Cláusulas')
@@ -228,12 +237,13 @@ export async function gerarExcelClausulas(clausulas, instrumento) {
     'Título': c.titulo || '',
     'Categoria': c.categoria || '',
     'Subcategoria': normalizarSubcategoria(c.subcategoria) || '',
+    'Categorias Adicionais': categoriasAdicionaisTexto(c),
     'Conteúdo Integral': conteudoCompleto(c),
     'Tags': (c.tags || []).join(', '),
     'Observações': c.observacoes || '',
   }))
   const ws = XLSX.utils.json_to_sheet(rows)
-  ws['!cols'] = [{ wch: 18 },{ wch: 45 },{ wch: 25 },{ wch: 25 },{ wch: 100 },{ wch: 25 },{ wch: 60 }]
+  ws['!cols'] = [{ wch: 18 },{ wch: 45 },{ wch: 25 },{ wch: 25 },{ wch: 35 },{ wch: 100 },{ wch: 25 },{ wch: 60 }]
   XLSX.utils.book_append_sheet(wb, ws, 'Cláusulas')
   XLSX.writeFile(wb, (instrumento?.nome || 'clausulas') + '_clausulas.xlsx')
 }
