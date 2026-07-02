@@ -172,8 +172,15 @@ const TAXONOMIA = [
       { nome: 'Licença para Serviço Militar', aliases: ['licença para serviço militar', 'licenca para servico militar'] },
       { nome: 'Licença para Comparecimento a Juízo', aliases: ['licença para comparecimento a juízo', 'licenca para comparecimento a juizo'] },
       { nome: 'Licença para Exame Vestibular', aliases: ['licença para exame vestibular', 'licenca para exame vestibular'] },
-      { nome: 'Licença Não Remunerada', aliases: ['licença não remunerada', 'licenca nao remunerada', 'licenças remuneradas', 'licencas remuneradas', 'licença remunerada', 'licenca remunerada'] },
+      { nome: 'Licença Não Remunerada', aliases: ['licença não remunerada', 'licenca nao remunerada'] },
       { nome: 'Licença Prêmio', aliases: ['licença prêmio', 'licenca premio'] },
+      // Para cláusulas que concedem, no MESMO texto, mais de um tipo de licença remunerada
+      // (ex.: "3 dias por casamento e 2 dias por luto" na mesma cláusula). Alternativa: usar
+      // a classificação principal para o tipo predominante e "categorias_adicionais" para o(s)
+      // outro(s) tipo(s) — mas esta subcategoria existe para os casos em que enumerar cada tipo
+      // separadamente não vale a pena (3+ tipos na mesma cláusula, ou cláusula genérica de
+      // "licenças diversas").
+      { nome: 'Outras Licenças Remuneradas (Múltiplos Tipos na Mesma Cláusula)', aliases: ['outras licenças remuneradas', 'outras licencas remuneradas', 'licenças remuneradas diversas', 'licencas remuneradas diversas', 'licenças remuneradas', 'licencas remuneradas', 'licença remunerada', 'licenca remunerada'] },
     ],
   },
   {
@@ -199,8 +206,13 @@ const TAXONOMIA = [
   {
     categoria: 'Relações Sindicais e Representação',
     subcategorias: [
-      { nome: 'Contribuição Assistencial', aliases: ['contribuição assistencial', 'contribuicao assistencial', 'contribuição assistencial (empregados)', 'contribuição assistencial empregados', 'contribuição assistencial patronal', 'contribuição confederativa patronal', 'contribuição permanente patronal', 'custeio sindical', 'taxa negocial', 'mensalidade associativa', 'mensalidade associativa (empregado)'] },
-      { nome: 'Contribuição Sindical/Confederativa', aliases: ['contribuições sindicais', 'contribuicoes sindicais', 'contribuições sindicais dos empregados', 'contribuições sindicais patronais'] },
+      { nome: 'Contribuição Assistencial Empregado', aliases: ['contribuição assistencial', 'contribuicao assistencial', 'contribuição assistencial (empregados)', 'contribuição assistencial empregados', 'contribuição assistencial empregado', 'custeio sindical', 'taxa negocial'] },
+      { nome: 'Contribuição Assistencial Patronal', aliases: ['contribuição assistencial patronal', 'contribuição confederativa patronal', 'contribuição permanente patronal'] },
+      { nome: 'Contribuição Sindical/Confederativa Empregado', aliases: ['contribuições sindicais', 'contribuicoes sindicais', 'contribuições sindicais dos empregados', 'contribuição sindical/confederativa', 'contribuição sindical confederativa', 'contribuição sindical', 'contribuição confederativa'] },
+      { nome: 'Contribuição Sindical/Confederativa Patronal', aliases: ['contribuições sindicais patronais', 'contribuição sindical patronal', 'contribuição confederativa patronal (empresa)'] },
+      { nome: 'Mensalidade Sindical Empregado', aliases: ['mensalidade associativa', 'mensalidade associativa (empregado)', 'mensalidade sindical', 'mensalidade sindical empregado'] },
+      { nome: 'Mensalidade Sindical Empresa', aliases: ['mensalidade sindical empresa', 'mensalidade sindical patronal', 'mensalidade associativa patronal', 'mensalidade associativa empresa'] },
+      { nome: 'Taxa de Abertura/Funcionamento', aliases: ['taxa de abertura', 'taxa de funcionamento', 'taxa de abertura/funcionamento', 'taxa de abertura e funcionamento'] },
       { nome: 'Direito de Oposição', aliases: ['direito de oposição', 'direito de oposicao'] },
       { nome: 'Garantias a Dirigentes Sindicais', aliases: ['garantias a diretores sindicais', 'liberação sindical', 'liberacao sindical', 'liberação de dirigentes sindicais', 'licença para dirigente sindical', 'licenca para dirigente sindical', 'licença remunerada para dirigentes sindicais'] },
       { nome: 'Informações Sindicais aos Empregados', aliases: ['informações sindicais', 'informacoes sindicais', 'informações sobre contribuições sindicais', 'comunicação sindical', 'comunicacao sindical'] },
