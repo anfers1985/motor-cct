@@ -91,13 +91,34 @@ function extrairNumericos(texto) {
 // Modificada = redação diferente mas sem valores para comparar
 // Exclusiva  = existe só em um dos instrumentos
 
+// `label`     → texto exibido nos badges e filtros (pode diferir da chave interna)
+// `relLabel`  → texto curto usado quando o badge aparece "colado" a uma fonte
+//               específica (coluna da comparada), deixando explícito que o
+//               julgamento é sobre a BASE em relação àquela fonte — nunca um
+//               julgamento sobre a fonte em si.
 export const STATUS_CONFIG = {
-  Superior:     { cls: 'bg-emerald-100 text-emerald-800 border-emerald-300', order: 0, icone: '▲' },
-  Inferior:     { cls: 'bg-red-100 text-red-700 border-red-300',             order: 1, icone: '▼' },
-  Igual:        { cls: 'bg-slate-100 text-slate-600 border-slate-300',       order: 2, icone: '=' },
-  Modificada:   { cls: 'bg-blue-100 text-blue-800 border-blue-300',          order: 3, icone: '~' },
-  'Sem previsão': { cls: 'bg-amber-50 text-amber-700 border-amber-200',      order: 4, icone: '−' },
-  Exclusiva:    { cls: 'bg-purple-100 text-purple-800 border-purple-300',    order: 5, icone: '◆' },
+  Superior:     { cls: 'bg-emerald-100 text-emerald-800 border-emerald-300', order: 0, icone: '▲', label: 'Superior',          relLabel: 'Base superior' },
+  Inferior:     { cls: 'bg-red-100 text-red-700 border-red-300',             order: 1, icone: '▼', label: 'Inferior',          relLabel: 'Base inferior' },
+  Igual:        { cls: 'bg-slate-100 text-slate-600 border-slate-300',       order: 2, icone: '=', label: 'Igual',             relLabel: 'Igual à base' },
+  Modificada:   { cls: 'bg-blue-100 text-blue-800 border-blue-300',          order: 3, icone: '~', label: 'Redação Diferente',  relLabel: 'Redação diferente' },
+  'Sem previsão': { cls: 'bg-amber-50 text-amber-700 border-amber-200',      order: 4, icone: '−', label: 'Sem Previsão',      relLabel: 'Sem previsão nesta fonte' },
+  Exclusiva:    { cls: 'bg-purple-100 text-purple-800 border-purple-300',    order: 5, icone: '◆', label: 'Exclusiva',         relLabel: 'Exclusiva desta fonte' },
+}
+
+// ─── Frase de veredito (headline) por status ─────────────────────────────────
+// Gera a frase curta que abre cada bloco do Veredito, deixando explícito o
+// sentido da comparação (quem é a base, quem é a fonte comparada) e evitando
+// termos que soem como um julgamento sobre a fonte comparada em si.
+export function fraseVeredito(status, baseLabel, fonteLabel, temBaseClausula = true) {
+  if (status === 'Exclusiva' && !temBaseClausula) return `${fonteLabel} tem cláusula exclusiva (sem correspondência na ${baseLabel})`
+  switch (status) {
+    case 'Superior':   return `${baseLabel} é superior à ${fonteLabel}`
+    case 'Inferior':   return `${baseLabel} é inferior à ${fonteLabel}`
+    case 'Igual':      return `${baseLabel} é igual à ${fonteLabel}`
+    case 'Modificada': return `Redação diferente entre ${baseLabel} e ${fonteLabel}`
+    case 'Sem previsão': return `${fonteLabel} não possui previsão equivalente à cláusula da ${baseLabel}`
+    default: return `${baseLabel} vs ${fonteLabel}: ${status}`
+  }
 }
 
 // ─── Formata texto de vigência para o resumo ─────────────────────────────────

@@ -12,7 +12,7 @@ function statusVigencia(fim) {
   return 'INDEFINIDO'
 }
 
-function addHeader(doc, title, subtitle = '') {
+export function addHeader(doc, title, subtitle = '') {
   doc.setFillColor(26, 79, 255); doc.rect(0, 0, 210, 30, 'F')
   doc.setTextColor(255, 255, 255)
   doc.setFontSize(14); doc.setFont('helvetica', 'bold'); doc.text('Motor CCT', 14, 11)
@@ -22,7 +22,7 @@ function addHeader(doc, title, subtitle = '') {
   doc.setTextColor(0, 0, 0)
 }
 
-function addFooter(doc, isLandscape) {
+export function addFooter(doc, isLandscape) {
   const pageCount = doc.internal.getNumberOfPages()
   const pageH = isLandscape ? 210 : 297
   for (let i = 1; i <= pageCount; i++) {
@@ -269,6 +269,125 @@ export function gerarPDFComparativo(resultado, instrumentoA, instrumentoB) {
 
   addFooter(doc, true)
   doc.save('comparativo_' + nomeA + '_vs_' + nomeB + '.pdf')
+}
+
+// ─── PDF da aba Negociação Sindical ──────────────────────────────────────────
+// Mesmo espírito visual do gerarPDFComparativo: cabeçalho azul, UMA tabela
+// única, texto integral (sem corte) e cor aplicada apenas a um selo estreito
+// de "Resultado" — nunca à linha inteira — para não poluir a leitura.
+export function gerarPDFNegociacao({ itens, baseLabel, comparadas, FONTES_CONFIG, STATUS_CONFIG, fraseVeredito }) {
+  const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' })
+  addHeader(
+    doc,
+    'Negociação Sindical — Comparativo de Fontes',
+    `Base: ${baseLabel}  ·  Comparadas: ${comparadas.map(f => FONTES_CONFIG[f]?.label).join(', ')}  ·  ` +
+    `Gerado em ${new Date().toLocaleDateString('pt-BR')}  ·  ${itens.length} cláusula(s)`
+  )
+
+  const STATUS_BADGE = {}
+  for (const [k, cfg] of Object.entries(STATUS_CONFIG)) {
+    // Cores derivadas da paleta Tailwind já usada nos badges da tela (100/700-800)
+    STATUS_BADGE[k] = {
+      Superior:       { fill: [209, 250, 229], text: [22, 101, 52] },
+      Inferior:       { fill: [254, 226, 226], text: [185, 28, 28] },
+      Igual:          { fill: [241, 245, 249], text: [71, 85, 105] },
+      Modificada:     { fill: [219, 234, 254], text: [30, 64, 175] },
+      'Sem previsão': { fill: [254, 249, 195], text: [146, 105, 0] },
+      Exclusiva:      { fill: [243, 232, 255], text: [109, 40, 217] },
+    }[k]
+  }
+
+  const numColsFonte = 1 + comparadas.length // base + cada comparada
+  const FONT_SIZE = 7
+
+  const head = [[
+    'Resultado',
+    `${baseLabel} (base)`,
+    ...comparadas.map(fc => FONTES_CONFIG[fc]?.label || fc),
+    'Veredito',
+  ]]
+
+  const body = itens.map(r => {
+    const numero = r.clausulaBase?.numero || r.clausulaNova?.numero || ''
+    const titulo = r.clausulaBase?.titulo || r.clausulaNova?.titulo || '—'
+    const cabecalho = (numero ? `Nº ${numero} — ` : '') + titulo
+
+    const colBase = r.clausulaBase
+      ? `${cabecalho}\n\n${r.clausulaBase.conteudo || ''}`
+      : `${titulo}\n\n— exclusiva da(s) fonte(s) comparada(s) —`
+
+    const colsComparadas = comparadas.map(fc => {
+      const par = r.pares?.[fc]
+      const av = r.avaliacoes?.[fc]
+      if (!par?.clausulaB) {
+        if (av?.status === 'Exclusiva' && r.clausulaNova) {
+          const cn = r.clausulaNova
+          return `${cn.numero ? `Nº ${cn.numero} — ` : ''}${cn.titulo || ''}\n\n${cn.conteudo || ''}`
+        }
+        return 'Não encontrado nesta fonte'
+      }
+      const num = par.clausulaB.numero ? `Nº ${par.clausulaB.numero} — ` : ''
+      return `${num}${par.clausulaB.titulo || ''}\n\n${par.clausulaB.conteudo || ''}`
+    })
+
+    const veredito = comparadas.map(fc => {
+      const av = r.avaliacoes?.[fc]
+      if (!av?.status) return null
+      const fl = FONTES_CONFIG[fc]?.label || fc
+      const cfg = STATUS_CONFIG[av.status] || {}
+      const headline = fraseVeredito(av.status, baseLabel, fl, !!r.clausulaBase)
+      return `[${cfg.label || av.status}] ${headline}${av.resumo ? '\n' + av.resumo : ''}`
+    }).filter(Boolean).join('\n\n')
+
+    const cfgGeral = STATUS_CONFIG[r.statusGeral] || {}
+    return {
+      cells: [
+        { content: `${cfgGeral.icone || ''} ${cfgGeral.label || r.statusGeral}`, _status: r.statusGeral },
+        colBase,
+        ...colsComparadas,
+        veredito,
+      ],
+    }
+  })
+
+  const usableWidth = 277 // A4 paisagem, margens de 10mm de cada lado
+  const colResultado = 20
+  const colVeredito = 62
+  const restante = usableWidth - colResultado - colVeredito
+  const colBaseW = Math.max(45, Math.floor(restante / (numColsFonte + 0.6)))
+  const colComparadaW = Math.max(38, Math.floor((restante - colBaseW) / Math.max(1, comparadas.length)))
+
+  const columnStyles = { 0: { cellWidth: colResultado, halign: 'center' }, 1: { cellWidth: colBaseW } }
+  comparadas.forEach((_, i) => { columnStyles[2 + i] = { cellWidth: colComparadaW } })
+  columnStyles[2 + comparadas.length] = { cellWidth: colVeredito, fontSize: 6.5 }
+
+  doc.autoTable({
+    startY: 34,
+    showHead: 'everyPage',
+    head,
+    body: body.map(b => b.cells),
+    margin: { left: 10, right: 10 },
+    styles: { fontSize: FONT_SIZE, cellPadding: 1.6, valign: 'top', overflow: 'linebreak', lineColor: [226, 232, 240], lineWidth: 0.1 },
+    headStyles: { fillColor: [26, 79, 255], textColor: 255, fontStyle: 'bold', fontSize: 8 },
+    columnStyles,
+    didParseCell: (data) => {
+      if (data.section !== 'body') return
+      // Único elemento colorido: o pequeno selo de Resultado (coluna 0) —
+      // o resto da linha permanece em branco/preto para manter a leitura limpa.
+      if (data.column.index === 0) {
+        const statusVal = data.cell.raw?._status
+        const cor = STATUS_BADGE[statusVal]
+        if (cor) {
+          data.cell.styles.fillColor = cor.fill
+          data.cell.styles.textColor = cor.text
+          data.cell.styles.fontStyle = 'bold'
+        }
+      }
+    },
+  })
+
+  addFooter(doc, true)
+  doc.save('negociacao_sindical_' + new Date().toISOString().slice(0, 10) + '.pdf')
 }
 
 export function gerarPDFClausulas(clausulas, instrumento) {

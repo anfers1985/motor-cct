@@ -1,13 +1,12 @@
 import { useState, useEffect, useCallback } from 'react'
 import { supabase } from '../services/supabase'
 import { useAuth } from '../hooks/useAuth'
-import { compararInstrumentosNeg, avaliarSuperioridade, STATUS_CONFIG } from '../utils/comparacao'
+import { compararInstrumentosNeg, avaliarSuperioridade, STATUS_CONFIG, fraseVeredito } from '../utils/comparacao'
 import { toNumeroOrdinal } from '../utils/ordenacao'
 import CheckList from '../components/UI/CheckList'
 import StepCard from '../components/UI/StepCard'
 import * as XLSX from 'xlsx'
-import jsPDF from 'jspdf'
-import 'jspdf-autotable'
+import { gerarPDFNegociacao } from '../services/reports/pdfReport'
 
 // ─── Fontes disponíveis ────────────────────────────────────────────────────────
 const FONTES_CONFIG = {
@@ -54,7 +53,7 @@ function StatusBadge({ status }) {
   const cfg = STATUS_CONFIG[status] || STATUS_CONFIG['Modificada']
   return (
     <span className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-semibold border ${cfg.cls}`}>
-      {cfg.icone} {status}
+      {cfg.icone} {cfg.label || status}
     </span>
   )
 }
@@ -268,16 +267,22 @@ export default function Negociacao() {
           vigenciaPorFonte[baseEfetiva], vigenciaPorFonte[fc]
         )
       }
-      // Status geral da linha: pior status entre todas as comparadas
-      // (Inferior é o mais crítico; Sem previsão alerta ausência de cobertura;
-      // Modificada pede revisão; Superior/Igual são situações favoráveis à base)
-      const statusOrder = ['Inferior', 'Sem previsão', 'Modificada', 'Superior', 'Igual']
-      let statusGeral = 'Igual'
+      // Status geral da linha: status mais "acionável" entre todas as comparadas.
+      // IMPORTANTE: "Sem previsão" não é um veredito sobre a base — é apenas a
+      // ausência de conteúdo NAQUELA fonte comparada. Por isso fica por último
+      // na prioridade: só vira o status geral quando NENHUMA outra fonte trouxe
+      // uma comparação de fato (ex.: se a CCT diverge na redação mas a Proposta
+      // simplesmente não trata do tema, o status geral deve refletir a CCT).
+      const statusOrder = ['Inferior', 'Modificada', 'Superior', 'Igual', 'Sem previsão']
+      let statusGeral = 'Sem previsão'
       for (const fc of comparadas) {
         const s = avaliacoes[fc].status
         if (statusOrder.indexOf(s) < statusOrder.indexOf(statusGeral)) statusGeral = s
       }
-      return { clausulaBase: cb, pares, avaliacoes, statusGeral, idx }
+      // Quais fontes efetivamente "causaram" o status geral (para exibir a
+      // atribuição junto ao badge e evitar a leitura de que ele descreve a base)
+      const fontesStatusGeral = comparadas.filter(fc => avaliacoes[fc].status === statusGeral)
+      return { clausulaBase: cb, pares, avaliacoes, statusGeral, fontesStatusGeral, idx }
     })
 
     // Cláusulas exclusivas da comparada (não existem na base)
@@ -368,137 +373,62 @@ export default function Negociacao() {
   function toggleSelTodos() { todosSel ? setSelecionados(new Set()) : setSelecionados(new Set(filtradoOrdenado.map((_, i) => i))) }
 
   // ─── Exportações ─────────────────────────────────────────────────────────────
+  // Uma coluna por fonte (base + cada comparada) e UMA coluna "Resultado"
+  // consolidada — exatamente a estrutura visual do painel (ACT | CCT | Proposta
+  // | Veredito), sem repetir Nº/Título/Conteúdo/Resultado/Veredito em colunas
+  // separadas por fonte.
   function exportarExcel() {
     if (!resultado) return
     const itens = selecionados.size > 0 ? filtradoOrdenado.filter((_, i) => selecionados.has(i)) : filtradoOrdenado
     const { comparadas, baseEfetiva } = resultado
     const fBase = FONTES_CONFIG[baseEfetiva]?.label || baseEfetiva
+
+    const celulaFonte = (clausula) => {
+      if (!clausula) return ''
+      const cab = (clausula.numero ? `Nº ${clausula.numero} — ` : '') + (clausula.titulo || '')
+      return clausula.conteudo ? `${cab}\n\n${clausula.conteudo}` : cab
+    }
+
     const wb = XLSX.utils.book_new()
     const rows = itens.map(r => {
       const row = {
-        'Status Geral': r.statusGeral,
-        [`Nº (${fBase})`]: r.clausulaBase?.numero || '',
-        [`Título (${fBase})`]: r.clausulaBase?.titulo || r.clausulaNova?.titulo || '',
-        [`Conteúdo (${fBase})`]: r.clausulaBase?.conteudo || '',
+        [`${fBase} (base)`]: r.clausulaBase
+          ? celulaFonte(r.clausulaBase)
+          : '— exclusiva da(s) fonte(s) comparada(s) —',
       }
+      const resultadoPartes = []
       for (const fc of comparadas) {
         const par = r.pares[fc]
         const av = r.avaliacoes?.[fc] || {}
         const fl = FONTES_CONFIG[fc]?.label || fc
-        row[`Nº (${fl})`] = par?.clausulaB?.numero || ''
-        row[`Título (${fl})`] = par?.clausulaB?.titulo || ''
-        row[`Conteúdo (${fl})`] = par?.clausulaB?.conteudo || ''
-        row[`Resultado vs ${fl}`] = av.status || '—'
-        row[`Veredito vs ${fl}`] = av.resumo || ''
+        row[fl] = par?.clausulaB
+          ? celulaFonte(par.clausulaB)
+          : (av.status === 'Exclusiva' ? celulaFonte(r.clausulaNova) : 'Não encontrado nesta fonte')
+        if (av.status) {
+          const cfg = STATUS_CONFIG[av.status] || {}
+          const headline = fraseVeredito(av.status, fBase, fl, !!r.clausulaBase)
+          resultadoPartes.push(`[${cfg.label || av.status}] ${headline}${av.resumo ? ' — ' + av.resumo : ''}`)
+        }
       }
+      row['Resultado'] = resultadoPartes.join('\n\n')
       return row
     })
+
     const ws = XLSX.utils.json_to_sheet(rows)
-    // Larguras automáticas
-    ws['!cols'] = Object.keys(rows[0] || {}).map(() => ({ wch: 40 }))
+    const headers = Object.keys(rows[0] || {})
+    ws['!cols'] = headers.map(h => ({ wch: h === 'Resultado' ? 55 : 45 }))
     XLSX.utils.book_append_sheet(wb, ws, 'Negociação')
     XLSX.writeFile(wb, 'negociacao_sindical_' + new Date().toISOString().slice(0, 10) + '.xlsx')
   }
 
+  // PDF no mesmo estilo do Comparativo: uma tabela única, texto completo (sem
+  // corte) e cor aplicada só ao pequeno selo de "Resultado" — não à linha toda.
   function exportarPDF() {
     if (!resultado) return
     const itens = selecionados.size > 0 ? filtradoOrdenado.filter((_, i) => selecionados.has(i)) : filtradoOrdenado
     const { comparadas, baseEfetiva } = resultado
     const fBase = FONTES_CONFIG[baseEfetiva]?.label || baseEfetiva
-    const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' })
-
-    const STATUS_COLOR = {
-      Superior:   [220, 252, 231],
-      Inferior:   [254, 226, 226],
-      Igual:      [241, 245, 249],
-      Modificada: [219, 234, 254],
-      'Sem previsão': [254, 249, 195],
-      Exclusiva:  [243, 232, 255],
-    }
-    const STATUS_TEXT_COLOR = {
-      Superior:   [22, 101, 52],
-      Inferior:   [185, 28, 28],
-      Igual:      [71, 85, 105],
-      Modificada: [30, 64, 175],
-      'Sem previsão': [146, 105, 0],
-      Exclusiva:  [107, 33, 168],
-    }
-    const trunc = (s, n) => !s ? '' : (s.length > n ? s.slice(0, n) + '…' : s)
-
-    doc.setFontSize(14); doc.setFont('helvetica', 'bold')
-    doc.text('Negociação Sindical — Comparativo de Fontes', 14, 14)
-    doc.setFontSize(9); doc.setFont('helvetica', 'normal'); doc.setTextColor(100)
-    doc.text(`Base: ${fBase}  ·  Comparadas: ${comparadas.map(f => FONTES_CONFIG[f]?.label).join(', ')}`, 14, 20)
-    doc.text(`Gerado em: ${new Date().toLocaleString('pt-BR')}  ·  Total: ${itens.length} cláusulas`, 14, 25)
-    doc.setTextColor(0)
-
-    // Uma única tabela consolidada — para cada cláusula, uma "banda de título"
-    // colorida (replica o cabeçalho do card do painel) seguida da linha de
-    // conteúdo: Base | cada fonte comparada (com seu próprio Nº) | Veredito.
-    const head = [[`${fBase} (base)`, ...comparadas.map(fc => FONTES_CONFIG[fc]?.label || fc), 'Veredito']]
-    const numColunas = 2 + comparadas.length
-
-    const body = []
-    const linhaEhBanda = [] // true = banda de título (colorida via colSpan, não via didParseCell)
-    const linhaStatus = [] // status da linha de conteúdo (para colorir via didParseCell)
-
-    itens.forEach(r => {
-      const numero = r.clausulaBase?.numero || r.clausulaNova?.numero || '—'
-      const titulo = r.clausulaBase?.titulo || r.clausulaNova?.titulo || '—'
-      const cfgStatus = STATUS_CONFIG[r.statusGeral] || {}
-
-      body.push([{
-        content: `${cfgStatus.icone || ''}  ${numero} — ${titulo}`,
-        colSpan: numColunas,
-        styles: { fontStyle: 'bold', fontSize: 8, fillColor: STATUS_COLOR[r.statusGeral] || [241, 245, 249], textColor: STATUS_TEXT_COLOR[r.statusGeral] || [30, 41, 59], cellPadding: 2 },
-      }])
-      linhaEhBanda.push(true); linhaStatus.push(null)
-
-      const colBase = r.clausulaBase ? trunc(r.clausulaBase.conteudo, 400) : '— exclusiva da(s) fonte(s) comparada(s) —'
-      const colsComparadas = comparadas.map(fc => {
-        const par = r.pares?.[fc]
-        if (!par?.clausulaB) return '— não encontrado nesta fonte —'
-        const num = par.clausulaB.numero ? `Nº ${par.clausulaB.numero}\n` : ''
-        return num + trunc(par.clausulaB.conteudo, 400)
-      })
-      const veredito = comparadas.map(fc => {
-        const av = r.avaliacoes?.[fc]
-        if (!av?.status) return null
-        const fl = FONTES_CONFIG[fc]?.label || fc
-        if (av.status === 'Exclusiva' && !r.clausulaBase) return `${fl} exclusiva (sem correspondência na ${fBase}): ${trunc(av.resumo, 220)}`
-        const verbo = av.status === 'Sem previsão' ? 'sem correspondência na' : `${av.status.toLowerCase()} à`
-        return `${fBase} ${verbo} ${fl}: ${trunc(av.resumo, 220)}`
-      }).filter(Boolean).join('\n\n')
-
-      body.push([colBase, ...colsComparadas, veredito])
-      linhaEhBanda.push(false); linhaStatus.push(r.statusGeral)
-    })
-
-    const colWidthComparada = Math.max(30, Math.floor(140 / Math.max(1, comparadas.length)))
-    const columnStyles = { 0: { cellWidth: 55 } }
-    comparadas.forEach((_, i) => { columnStyles[1 + i] = { cellWidth: colWidthComparada } })
-    columnStyles[1 + comparadas.length] = { cellWidth: 60, fontSize: 6.5, fontStyle: 'italic' }
-
-    doc.autoTable({
-      startY: 30,
-      head,
-      body,
-      margin: { left: 10, right: 10 },
-      styles: { fontSize: 7, cellPadding: 1.6, valign: 'top', overflow: 'linebreak', lineColor: [226, 232, 240], lineWidth: 0.1 },
-      headStyles: { fillColor: [79, 70, 229], textColor: 255, fontStyle: 'bold', fontSize: 8 },
-      columnStyles,
-      didParseCell: (data) => {
-        if (data.section !== 'body') return
-        if (linhaEhBanda[data.row.index]) return // banda já tem cor própria definida por célula
-        const statusVal = linhaStatus[data.row.index]
-        const cor = STATUS_COLOR[statusVal]
-        const corTexto = STATUS_TEXT_COLOR[statusVal]
-        if (cor) data.cell.styles.fillColor = cor
-        if (data.column.index === 1 + comparadas.length && corTexto) data.cell.styles.textColor = corTexto
-      },
-    })
-
-    doc.save('negociacao_' + new Date().toISOString().slice(0, 10) + '.pdf')
+    gerarPDFNegociacao({ itens, baseLabel: fBase, comparadas, FONTES_CONFIG, STATUS_CONFIG, fraseVeredito })
   }
 
   // ─── Render ───────────────────────────────────────────────────────────────────
@@ -634,7 +564,7 @@ export default function Negociacao() {
               <button key={s} onClick={() => toggleStatus(s)}
                 className={`p-2 rounded-lg border-2 text-center transition-all select-none ${statusAtivos.has(s) ? cfg.cls + ' shadow-sm' : 'border-slate-200 bg-white opacity-40 hover:opacity-60'}`}>
                 <p className="text-lg font-bold">{statsStatus[s] || 0}</p>
-                <p className="text-[10px] font-medium leading-tight">{cfg.icone} {s}</p>
+                <p className="text-[10px] font-medium leading-tight">{cfg.icone} {cfg.label || s}</p>
               </button>
             ))}
           </div>
@@ -698,15 +628,26 @@ export default function Negociacao() {
                       <input type="checkbox" checked={selected}
                         onChange={() => toggleSel(idx)} onClick={e => e.stopPropagation()}
                         className="w-4 h-4 flex-shrink-0 cursor-pointer accent-blue-600" />
-                      <span className={`text-xs px-2 py-0.5 rounded-full font-semibold border flex-shrink-0 ${cfgStatus.cls}`}>
-                        {cfgStatus.icone} {r.statusGeral}
+                      <span
+                        title={
+                          comparadas.length > 1
+                            ? `Resultado geral (pior situação encontrada) — referente a: ${(r.fontesStatusGeral || []).map(fc => FONTES_CONFIG[fc]?.label).join(', ')}`
+                            : 'Resultado geral'
+                        }
+                        className={`text-xs px-2 py-0.5 rounded-full font-semibold border flex-shrink-0 ${cfgStatus.cls}`}>
+                        {cfgStatus.icone} {cfgStatus.label || r.statusGeral}
+                        {comparadas.length > 1 && r.fontesStatusGeral?.length > 0 && r.fontesStatusGeral.length < comparadas.length && (
+                          <span className="font-normal opacity-75"> · {r.fontesStatusGeral.map(fc => FONTES_CONFIG[fc]?.label).join(', ')}</span>
+                        )}
                       </span>
                       <p className="text-sm text-slate-700 flex-1 min-w-0 truncate font-medium">
                         {r.clausulaBase
                           ? (r.clausulaBase.numero ? r.clausulaBase.numero + ' — ' : '') + r.clausulaBase.titulo
                           : <span className="text-slate-400 italic">Exclusiva: {r.clausulaNova?.titulo || '—'}</span>}
                       </p>
-                      {/* Badges por fonte comparada */}
+                      {/* Badges por fonte comparada — sempre com o rótulo relacional
+                          (ex.: "Base inferior"), nunca o status "solto", para deixar
+                          claro que o julgamento é sobre a BASE e não sobre a fonte. */}
                       <div className="flex gap-1 flex-shrink-0 flex-wrap">
                         {comparadas.map(fc => {
                           const av = r.avaliacoes?.[fc] || {}
@@ -714,7 +655,7 @@ export default function Negociacao() {
                           return (
                             <span key={fc} title={av.resumo}
                               className={`text-xs px-1.5 py-0.5 rounded-full font-medium border ${cfg2.cls || 'bg-slate-100 text-slate-500'}`}>
-                              {FONTES_CONFIG[fc]?.icone} {cfg2.icone} {av.status || '—'}
+                              {FONTES_CONFIG[fc]?.icone} {cfg2.icone} {cfg2.relLabel || av.status || '—'}
                             </span>
                           )
                         })}
@@ -775,8 +716,8 @@ export default function Negociacao() {
                                 {cfgFonte?.icone} {cfgFonte?.label}
                                 {par?.clausulaB?.numero && <span className="font-normal normal-case text-slate-400"> · Nº {par.clausulaB.numero}</span>}
                               </p>
-                              <span className={`text-xs px-2 py-0.5 rounded-full font-semibold border ${cfg2.cls || 'bg-slate-100 text-slate-500'}`}>
-                                {cfg2.icone} {av.status || '—'}
+                              <span title={av.resumo} className={`text-xs px-2 py-0.5 rounded-full font-semibold border ${cfg2.cls || 'bg-slate-100 text-slate-500'}`}>
+                                {cfg2.icone} {cfg2.relLabel || av.status || '—'}
                               </span>
                             </div>
                             {/* Conteúdo */}
@@ -807,9 +748,7 @@ export default function Negociacao() {
                             return (
                               <div key={fc} className={`text-xs rounded-lg px-2.5 py-2 border ${cfg2.cls || 'bg-slate-50 text-slate-600'}`}>
                                 <p className="font-semibold mb-0.5">
-                                  {cfg2.icone} {av.status === 'Exclusiva' && !r.clausulaBase
-                                    ? `${fonteLabel} tem cláusula exclusiva (sem correspondência na ${baseLabel})`
-                                    : `${baseLabel} ${av.status === 'Sem previsão' ? 'sem correspondência na' : `é ${av.status?.toLowerCase()} à`} ${fonteLabel}`}
+                                  {cfg2.icone} {fraseVeredito(av.status, baseLabel, fonteLabel, !!r.clausulaBase)}
                                 </p>
                                 {av.resumo && <p className="font-normal opacity-90">{av.resumo}</p>}
                               </div>
