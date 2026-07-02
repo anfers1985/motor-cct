@@ -432,61 +432,69 @@ export default function Negociacao() {
     doc.text(`Gerado em: ${new Date().toLocaleString('pt-BR')}  ·  Total: ${itens.length} cláusulas`, 14, 25)
     doc.setTextColor(0)
 
-    // Uma única tabela consolidada — espelha o painel: Nº/Título | Base | cada
-    // fonte comparada (com seu próprio Nº) | Veredito (resumo por fonte).
-    // Conteúdo integral fica truncado no PDF (documento resumido); o painel na
-    // aplicação mostra o texto completo.
-    const head = [['Nº / Título', `${fBase} (base)`, ...comparadas.map(fc => FONTES_CONFIG[fc]?.label || fc), 'Veredito']]
+    // Uma única tabela consolidada — para cada cláusula, uma "banda de título"
+    // colorida (replica o cabeçalho do card do painel) seguida da linha de
+    // conteúdo: Base | cada fonte comparada (com seu próprio Nº) | Veredito.
+    const head = [[`${fBase} (base)`, ...comparadas.map(fc => FONTES_CONFIG[fc]?.label || fc), 'Veredito']]
+    const numColunas = 2 + comparadas.length
 
-    const body = itens.map(r => {
+    const body = []
+    const linhaEhBanda = [] // true = banda de título (colorida via colSpan, não via didParseCell)
+    const linhaStatus = [] // status da linha de conteúdo (para colorir via didParseCell)
+
+    itens.forEach(r => {
       const numero = r.clausulaBase?.numero || r.clausulaNova?.numero || '—'
       const titulo = r.clausulaBase?.titulo || r.clausulaNova?.titulo || '—'
-      const colTitulo = `${numero}\n${titulo}`
-      const colBase = r.clausulaBase ? trunc(r.clausulaBase.conteudo, 400) : '— exclusiva da(s) fonte(s) comparada(s) —'
+      const cfgStatus = STATUS_CONFIG[r.statusGeral] || {}
 
+      body.push([{
+        content: `${cfgStatus.icone || ''}  ${numero} — ${titulo}`,
+        colSpan: numColunas,
+        styles: { fontStyle: 'bold', fontSize: 8, fillColor: STATUS_COLOR[r.statusGeral] || [241, 245, 249], textColor: STATUS_TEXT_COLOR[r.statusGeral] || [30, 41, 59], cellPadding: 2 },
+      }])
+      linhaEhBanda.push(true); linhaStatus.push(null)
+
+      const colBase = r.clausulaBase ? trunc(r.clausulaBase.conteudo, 400) : '— exclusiva da(s) fonte(s) comparada(s) —'
       const colsComparadas = comparadas.map(fc => {
         const par = r.pares?.[fc]
         if (!par?.clausulaB) return '— não encontrado nesta fonte —'
         const num = par.clausulaB.numero ? `Nº ${par.clausulaB.numero}\n` : ''
         return num + trunc(par.clausulaB.conteudo, 400)
       })
-
       const veredito = comparadas.map(fc => {
-        const av = r.avaliacoes?.[fc] || {}
+        const av = r.avaliacoes?.[fc]
+        if (!av?.status) return null
         const fl = FONTES_CONFIG[fc]?.label || fc
-        const verbo = av.status === 'Sem previsão' ? 'sem correspondência na' : `${(av.status || '—').toLowerCase()} à`
+        if (av.status === 'Exclusiva' && !r.clausulaBase) return `${fl} exclusiva (sem correspondência na ${fBase}): ${trunc(av.resumo, 220)}`
+        const verbo = av.status === 'Sem previsão' ? 'sem correspondência na' : `${av.status.toLowerCase()} à`
         return `${fBase} ${verbo} ${fl}: ${trunc(av.resumo, 220)}`
-      }).join('\n\n')
+      }).filter(Boolean).join('\n\n')
 
-      // status "pior caso" da linha, para colorir a linha inteira
-      const statusOrder = ['Inferior', 'Sem previsão', 'Modificada', 'Superior', 'Igual', 'Exclusiva']
-      let statusLinha = r.statusGeral
-      return { row: [colTitulo, colBase, ...colsComparadas, veredito], statusLinha }
+      body.push([colBase, ...colsComparadas, veredito])
+      linhaEhBanda.push(false); linhaStatus.push(r.statusGeral)
     })
 
     const colWidthComparada = Math.max(30, Math.floor(140 / Math.max(1, comparadas.length)))
-    const columnStyles = {
-      0: { cellWidth: 28, fontStyle: 'bold' },
-      1: { cellWidth: 55 },
-    }
-    comparadas.forEach((_, i) => { columnStyles[2 + i] = { cellWidth: colWidthComparada } })
-    columnStyles[2 + comparadas.length] = { cellWidth: 60, fontSize: 6.5, fontStyle: 'italic' }
+    const columnStyles = { 0: { cellWidth: 55 } }
+    comparadas.forEach((_, i) => { columnStyles[1 + i] = { cellWidth: colWidthComparada } })
+    columnStyles[1 + comparadas.length] = { cellWidth: 60, fontSize: 6.5, fontStyle: 'italic' }
 
     doc.autoTable({
       startY: 30,
       head,
-      body: body.map(b => b.row),
+      body,
       margin: { left: 10, right: 10 },
-      styles: { fontSize: 7, cellPadding: 1.6, valign: 'top', overflow: 'linebreak' },
+      styles: { fontSize: 7, cellPadding: 1.6, valign: 'top', overflow: 'linebreak', lineColor: [226, 232, 240], lineWidth: 0.1 },
       headStyles: { fillColor: [79, 70, 229], textColor: 255, fontStyle: 'bold', fontSize: 8 },
       columnStyles,
       didParseCell: (data) => {
         if (data.section !== 'body') return
-        const statusVal = body[data.row.index]?.statusLinha
+        if (linhaEhBanda[data.row.index]) return // banda já tem cor própria definida por célula
+        const statusVal = linhaStatus[data.row.index]
         const cor = STATUS_COLOR[statusVal]
         const corTexto = STATUS_TEXT_COLOR[statusVal]
         if (cor) data.cell.styles.fillColor = cor
-        if (data.column.index === 2 + comparadas.length && corTexto) data.cell.styles.textColor = corTexto
+        if (data.column.index === 1 + comparadas.length && corTexto) data.cell.styles.textColor = corTexto
       },
     })
 
@@ -791,14 +799,17 @@ export default function Negociacao() {
                         <p className="text-xs font-bold text-slate-600 uppercase tracking-wide mb-2">⚖️ Veredito</p>
                         <div className="space-y-2">
                           {comparadas.map(fc => {
-                            const av = r.avaliacoes?.[fc] || {}
+                            const av = r.avaliacoes?.[fc]
+                            if (!av?.status) return null // linha "Nova/Exclusiva": só a fonte que originou a cláusula tem avaliação
                             const cfg2 = STATUS_CONFIG[av.status] || {}
                             const baseLabel = FONTES_CONFIG[resultado.baseEfetiva]?.label
                             const fonteLabel = FONTES_CONFIG[fc]?.label
                             return (
                               <div key={fc} className={`text-xs rounded-lg px-2.5 py-2 border ${cfg2.cls || 'bg-slate-50 text-slate-600'}`}>
                                 <p className="font-semibold mb-0.5">
-                                  {cfg2.icone} {baseLabel} {av.status === 'Sem previsão' ? 'sem correspondência na' : `é ${av.status?.toLowerCase()} à`} {fonteLabel}
+                                  {cfg2.icone} {av.status === 'Exclusiva' && !r.clausulaBase
+                                    ? `${fonteLabel} tem cláusula exclusiva (sem correspondência na ${baseLabel})`
+                                    : `${baseLabel} ${av.status === 'Sem previsão' ? 'sem correspondência na' : `é ${av.status?.toLowerCase()} à`} ${fonteLabel}`}
                                 </p>
                                 {av.resumo && <p className="font-normal opacity-90">{av.resumo}</p>}
                               </div>

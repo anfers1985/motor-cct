@@ -179,6 +179,40 @@ export function avaliarSuperioridade(textoBase, textoComparado, tituloClausula =
   const numBase = extrairNumericos(textoBase)
   const numComp = extrairNumericos(textoComparado)
 
+  // ── Caso especial: cláusulas de reajuste/correção salarial ──
+  // Aqui dois fatores tornam a comparação numérica simples (% vs %) enganosa:
+  //
+  // 1) Fórmula indexada: "INPC + 5%" não é "5%" — é a inflação (variável,
+  //    tipicamente positiva) somada a 5 p.p. fixos. Extrair só o "5" e comparar
+  //    como se fosse o valor total subestima sistematicamente essa proposta.
+  // 2) Vigência vencida: se a cláusula-base já venceu, o percentual dela era o
+  //    reajuste do período ANTERIOR (já aplicado/consumido nos salários). Uma
+  //    cláusula comparada com vigência atual representa um reajuste NOVO para
+  //    o período corrente — não é uma disputa do "mesmo bolo", e a base não
+  //    tem nada vigente a oferecer para o novo período.
+  const ehReajuste = /reajuste|corre[cç][aã]o salarial/i.test(tituloClausula || '')
+  if (ehReajuste) {
+    const REGEX_INDICE = /\b(INPC|IPCA|IGP[-\s]?M|ICV|dissídio)\b/i
+    const compTemIndice = REGEX_INDICE.test(textoComparado)
+    const baseTemIndice = REGEX_INDICE.test(textoBase)
+
+    if (compTemIndice && !baseTemIndice) {
+      return {
+        status: 'Inferior',
+        resumo: `A comparada vincula o reajuste a um índice de inflação (fórmula indexada) somado a um adicional fixo, o que tende a superar o percentual fixo da base ao longo da vigência — a base não acompanha a inflação.${contextoVigencia}`,
+      }
+    }
+
+    const baseVencida = vigenciaBase?.fim && vigenciaBase.fim < new Date().toISOString().slice(0, 10)
+    const compVigente = !vigenciaComparada?.fim || vigenciaComparada.fim >= new Date().toISOString().slice(0, 10)
+    if (baseVencida && compVigente) {
+      return {
+        status: 'Inferior',
+        resumo: `A cláusula da base refere-se a um reajuste de período já encerrado (vencida) — já aplicado e consumido nos salários. A comparada trata de um reajuste para o período vigente, não havendo reajuste correspondente ativo na base para o novo período.${contextoVigencia}`,
+      }
+    }
+  }
+
   // ── Comparação numérica ──
   // Prioridade 1: percentuais (reajuste, adicional, etc.) — mas SÓ quando não
   // há valores monetários divergentes disponíveis. Isso evita que um percentual
