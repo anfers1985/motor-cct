@@ -74,7 +74,7 @@ motor-cct/
 ├── package-lock.json
 ├── vite.config.js
 ├── tailwind.config.js
-└── supabase\_setup.sql
+└── supabase\\\_setup.sql
 ```
 
 \---
@@ -84,18 +84,18 @@ motor-cct/
 ### Tabelas
 
 ```sql
-sindicatos    -- tipo, razao\_social, sigla, cnpj, estado, municipio,
-              -- base\_territorial, categoria, federacao, confederacao
-empresas      -- razao\_social, nome\_fantasia, cnpj, estado, municipio
-operacoes     -- empresa\_id, nome, codigo, estado, municipio,
-              -- sindicato\_laboral\_id, sindicato\_patronal\_id
-instrumentos  -- tipo, nome, empresa\_id, operacao\_id,
-              -- sindicato\_laboral\_id, sindicato\_patronal\_id,
-              -- vigencia\_inicio, vigencia\_fim, arquivo\_url,
-              -- arquivo\_nome, status\_processamento
-clausulas     -- instrumento\_id, numero, titulo, conteudo, categoria,
-              -- subcategoria, valor\_monetario, percentual,
-              -- vigencia\_especifica, observacoes, tags\[]
+sindicatos    -- tipo, razao\\\_social, sigla, cnpj, estado, municipio,
+              -- base\\\_territorial, categoria, federacao, confederacao
+empresas      -- razao\\\_social, nome\\\_fantasia, cnpj, estado, municipio
+operacoes     -- empresa\\\_id, nome, codigo, estado, municipio,
+              -- sindicato\\\_laboral\\\_id, sindicato\\\_patronal\\\_id
+instrumentos  -- tipo, nome, empresa\\\_id, operacao\\\_id,
+              -- sindicato\\\_laboral\\\_id, sindicato\\\_patronal\\\_id,
+              -- vigencia\\\_inicio, vigencia\\\_fim, arquivo\\\_url,
+              -- arquivo\\\_nome, status\\\_processamento
+clausulas     -- instrumento\\\_id, numero, titulo, conteudo, categoria,
+              -- subcategoria, valor\\\_monetario, percentual,
+              -- vigencia\\\_especifica, observacoes, tags\\\[]
 ```
 
 Todas com **Row Level Security** — cada usuário vê apenas seus dados.
@@ -103,7 +103,7 @@ Todas com **Row Level Security** — cada usuário vê apenas seus dados.
 ### Storage
 
 * Bucket: `instrumentos` (público)
-* Caminho: `{user\_id}/{timestamp}.{ext}`
+* Caminho: `{user\\\_id}/{timestamp}.{ext}`
 * Limite gratuito: 1GB (\~500-1000 documentos)
 
 \---
@@ -113,15 +113,15 @@ Todas com **Row Level Security** — cada usuário vê apenas seus dados.
 **GitHub Secrets** (Settings → Secrets → Actions):
 
 ```
-VITE\_SUPABASE\_URL      = https://uioctuzoxkvmpmhbfice.supabase.co
-VITE\_SUPABASE\_ANON\_KEY = eyJ... (chave anon do Supabase)
+VITE\\\_SUPABASE\\\_URL      = https://uioctuzoxkvmpmhbfice.supabase.co
+VITE\\\_SUPABASE\\\_ANON\\\_KEY = eyJ... (chave anon do Supabase)
 ```
 
 **Arquivo local `.env`** (para desenvolvimento):
 
 ```
-VITE\_SUPABASE\_URL=https://uioctuzoxkvmpmhbfice.supabase.co
-VITE\_SUPABASE\_ANON\_KEY=eyJ...
+VITE\\\_SUPABASE\\\_URL=https://uioctuzoxkvmpmhbfice.supabase.co
+VITE\\\_SUPABASE\\\_ANON\\\_KEY=eyJ...
 ```
 
 Chaves de IA NÃO ficam no .env — inseridas pelo usuário em Configurações, salvas no localStorage.
@@ -132,7 +132,7 @@ Chaves de IA NÃO ficam no .env — inseridas pelo usuário em Configurações, 
 
 |Provedor|Modelo padrão|Limite gratuito|Obs|
 |-|-|-|-|
-|**Google Gemini** ⭐|gemini-2.0-flash|1.500 req/dia|Recomendado|
+|**Google Gemini** ⭐|gemini-2.5-flash|1.500 req/dia|Recomendado|
 |Anthropic Claude|claude-haiku-4-5|Crédito inicial|Lê PDF nativo|
 |OpenAI|gpt-4o-mini|Crédito inicial|—|
 |Groq|llama-3.3-70b-versatile|Limitado tokens|Evitar docs grandes|
@@ -257,7 +257,7 @@ Empresa → N operações, cada operação vincula sindicato laboral e patronal
 git add .
 git commit -m "descrição"
 git push origin main
-# Deploy automático via GitHub Actions (\~4 minutos)
+# Deploy automático via GitHub Actions (\\\~4 minutos)
 # URL: https://anfers1985.github.io/motor-cct/
 ```
 
