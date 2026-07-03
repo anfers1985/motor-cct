@@ -617,7 +617,6 @@ export default function Negociacao() {
               const expanded = isExpanded(idx)
               const selected = selecionados.has(idx)
               const { comparadas } = resultado
-              const cfgStatus = STATUS_CONFIG[r.statusGeral] || {}
 
               return (
                 <div key={idx} className={`card overflow-hidden transition-all ${selected ? 'ring-2 ring-brand-400' : ''}`}>
@@ -628,18 +627,6 @@ export default function Negociacao() {
                       <input type="checkbox" checked={selected}
                         onChange={() => toggleSel(idx)} onClick={e => e.stopPropagation()}
                         className="w-4 h-4 flex-shrink-0 cursor-pointer accent-blue-600" />
-                      <span
-                        title={
-                          comparadas.length > 1
-                            ? `Resultado geral (pior situação encontrada) — referente a: ${(r.fontesStatusGeral || []).map(fc => FONTES_CONFIG[fc]?.label).join(', ')}`
-                            : 'Resultado geral'
-                        }
-                        className={`text-xs px-2 py-0.5 rounded-full font-semibold border flex-shrink-0 ${cfgStatus.cls}`}>
-                        {cfgStatus.icone} {cfgStatus.label || r.statusGeral}
-                        {comparadas.length > 1 && r.fontesStatusGeral?.length > 0 && r.fontesStatusGeral.length < comparadas.length && (
-                          <span className="font-normal opacity-75"> · {r.fontesStatusGeral.map(fc => FONTES_CONFIG[fc]?.label).join(', ')}</span>
-                        )}
-                      </span>
                       <p className="text-sm text-slate-700 flex-1 min-w-0 truncate font-medium">
                         {r.clausulaBase
                           ? (r.clausulaBase.numero ? r.clausulaBase.numero + ' — ' : '') + r.clausulaBase.titulo
@@ -647,7 +634,10 @@ export default function Negociacao() {
                       </p>
                       {/* Badges por fonte comparada — sempre com o rótulo relacional
                           (ex.: "Base inferior"), nunca o status "solto", para deixar
-                          claro que o julgamento é sobre a BASE e não sobre a fonte. */}
+                          claro que o julgamento é sobre a BASE e não sobre a fonte.
+                          IMPORTANTE: nenhum selo de resultado fica ao lado do nome
+                          da cláusula-base — o resultado só aparece nestes badges
+                          (por fonte comparada) e no bloco de Veredito abaixo. */}
                       <div className="flex gap-1 flex-shrink-0 flex-wrap">
                         {comparadas.map(fc => {
                           const av = r.avaliacoes?.[fc] || {}

@@ -273,8 +273,11 @@ export function gerarPDFComparativo(resultado, instrumentoA, instrumentoB) {
 
 // ─── PDF da aba Negociação Sindical ──────────────────────────────────────────
 // Mesmo espírito visual do gerarPDFComparativo: cabeçalho azul, UMA tabela
-// única, texto integral (sem corte) e cor aplicada apenas a um selo estreito
-// de "Resultado" — nunca à linha inteira — para não poluir a leitura.
+// única, texto integral (sem corte). O status/cor de cada comparação é
+// aplicado DENTRO da própria coluna da fonte comparada (CCT, Proposta...) —
+// nunca em uma coluna solta ao lado da base, para não sugerir que o
+// resultado é um atributo da cláusula-base (ACT). A coluna Base fica sempre
+// neutra (sem cor), assim como a coluna Veredito.
 export function gerarPDFNegociacao({ itens, baseLabel, comparadas, FONTES_CONFIG, STATUS_CONFIG, fraseVeredito }) {
   const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' })
   addHeader(
@@ -284,24 +287,18 @@ export function gerarPDFNegociacao({ itens, baseLabel, comparadas, FONTES_CONFIG
     `Gerado em ${new Date().toLocaleDateString('pt-BR')}  ·  ${itens.length} cláusula(s)`
   )
 
-  const STATUS_BADGE = {}
-  for (const [k, cfg] of Object.entries(STATUS_CONFIG)) {
-    // Cores derivadas da paleta Tailwind já usada nos badges da tela (100/700-800)
-    STATUS_BADGE[k] = {
-      Superior:       { fill: [209, 250, 229], text: [22, 101, 52] },
-      Inferior:       { fill: [254, 226, 226], text: [185, 28, 28] },
-      Igual:          { fill: [241, 245, 249], text: [71, 85, 105] },
-      Modificada:     { fill: [219, 234, 254], text: [30, 64, 175] },
-      'Sem previsão': { fill: [254, 249, 195], text: [146, 105, 0] },
-      Exclusiva:      { fill: [243, 232, 255], text: [109, 40, 217] },
-    }[k]
+  const STATUS_BADGE = {
+    Superior:       { fill: [225, 250, 237], text: [22, 101, 52] },
+    Inferior:       { fill: [254, 235, 235], text: [185, 28, 28] },
+    Igual:          { fill: [244, 247, 250], text: [71, 85, 105] },
+    Modificada:     { fill: [230, 239, 254], text: [30, 64, 175] },
+    'Sem previsão': { fill: [254, 251, 220], text: [146, 105, 0] },
+    Exclusiva:      { fill: [246, 238, 254], text: [109, 40, 217] },
   }
 
-  const numColsFonte = 1 + comparadas.length // base + cada comparada
   const FONT_SIZE = 7
 
   const head = [[
-    'Resultado',
     `${baseLabel} (base)`,
     ...comparadas.map(fc => FONTES_CONFIG[fc]?.label || fc),
     'Veredito',
@@ -316,18 +313,24 @@ export function gerarPDFNegociacao({ itens, baseLabel, comparadas, FONTES_CONFIG
       ? `${cabecalho}\n\n${r.clausulaBase.conteudo || ''}`
       : `${titulo}\n\n— exclusiva da(s) fonte(s) comparada(s) —`
 
+    // Cada coluna comparada carrega seu PRÓPRIO status (via _status), usado
+    // só para colorir aquela célula — nunca a linha inteira nem a base.
     const colsComparadas = comparadas.map(fc => {
       const par = r.pares?.[fc]
       const av = r.avaliacoes?.[fc]
+      const statusVal = av?.status
+      const cfg = STATUS_CONFIG[statusVal] || {}
+      const tag = statusVal ? `[${cfg.icone || ''} ${cfg.label || statusVal}]\n` : ''
+
       if (!par?.clausulaB) {
-        if (av?.status === 'Exclusiva' && r.clausulaNova) {
+        if (statusVal === 'Exclusiva' && r.clausulaNova) {
           const cn = r.clausulaNova
-          return `${cn.numero ? `Nº ${cn.numero} — ` : ''}${cn.titulo || ''}\n\n${cn.conteudo || ''}`
+          return { content: `${tag}${cn.numero ? `Nº ${cn.numero} — ` : ''}${cn.titulo || ''}\n\n${cn.conteudo || ''}`, _status: statusVal }
         }
-        return 'Não encontrado nesta fonte'
+        return { content: `${tag}Não encontrado nesta fonte`, _status: statusVal }
       }
       const num = par.clausulaB.numero ? `Nº ${par.clausulaB.numero} — ` : ''
-      return `${num}${par.clausulaB.titulo || ''}\n\n${par.clausulaB.conteudo || ''}`
+      return { content: `${tag}${num}${par.clausulaB.titulo || ''}\n\n${par.clausulaB.conteudo || ''}`, _status: statusVal }
     })
 
     const veredito = comparadas.map(fc => {
@@ -339,27 +342,20 @@ export function gerarPDFNegociacao({ itens, baseLabel, comparadas, FONTES_CONFIG
       return `[${cfg.label || av.status}] ${headline}${av.resumo ? '\n' + av.resumo : ''}`
     }).filter(Boolean).join('\n\n')
 
-    const cfgGeral = STATUS_CONFIG[r.statusGeral] || {}
     return {
-      cells: [
-        { content: `${cfgGeral.icone || ''} ${cfgGeral.label || r.statusGeral}`, _status: r.statusGeral },
-        colBase,
-        ...colsComparadas,
-        veredito,
-      ],
+      cells: [colBase, ...colsComparadas, veredito],
     }
   })
 
   const usableWidth = 277 // A4 paisagem, margens de 10mm de cada lado
-  const colResultado = 20
   const colVeredito = 62
-  const restante = usableWidth - colResultado - colVeredito
-  const colBaseW = Math.max(45, Math.floor(restante / (numColsFonte + 0.6)))
-  const colComparadaW = Math.max(38, Math.floor((restante - colBaseW) / Math.max(1, comparadas.length)))
+  const restante = usableWidth - colVeredito
+  const colBaseW = Math.max(48, Math.floor(restante / (comparadas.length + 1.4)))
+  const colComparadaW = Math.max(40, Math.floor((restante - colBaseW) / Math.max(1, comparadas.length)))
 
-  const columnStyles = { 0: { cellWidth: colResultado, halign: 'center' }, 1: { cellWidth: colBaseW } }
-  comparadas.forEach((_, i) => { columnStyles[2 + i] = { cellWidth: colComparadaW } })
-  columnStyles[2 + comparadas.length] = { cellWidth: colVeredito, fontSize: 6.5 }
+  const columnStyles = { 0: { cellWidth: colBaseW } }
+  comparadas.forEach((_, i) => { columnStyles[1 + i] = { cellWidth: colComparadaW } })
+  columnStyles[1 + comparadas.length] = { cellWidth: colVeredito, fontSize: 6.5 }
 
   doc.autoTable({
     startY: 34,
@@ -372,16 +368,15 @@ export function gerarPDFNegociacao({ itens, baseLabel, comparadas, FONTES_CONFIG
     columnStyles,
     didParseCell: (data) => {
       if (data.section !== 'body') return
-      // Único elemento colorido: o pequeno selo de Resultado (coluna 0) —
-      // o resto da linha permanece em branco/preto para manter a leitura limpa.
-      if (data.column.index === 0) {
-        const statusVal = data.cell.raw?._status
-        const cor = STATUS_BADGE[statusVal]
-        if (cor) {
-          data.cell.styles.fillColor = cor.fill
-          data.cell.styles.textColor = cor.text
-          data.cell.styles.fontStyle = 'bold'
-        }
+      // Só as colunas das fontes COMPARADAS recebem cor — a coluna 0 (Base)
+      // e a última (Veredito) permanecem neutras, para nunca sugerir que o
+      // resultado é um atributo da cláusula-base.
+      const isComparadaCol = data.column.index >= 1 && data.column.index <= comparadas.length
+      if (!isComparadaCol) return
+      const statusVal = data.cell.raw?._status
+      const cor = STATUS_BADGE[statusVal]
+      if (cor) {
+        data.cell.styles.fillColor = cor.fill
       }
     },
   })
