@@ -315,12 +315,15 @@ export function gerarPDFNegociacao({ itens, baseLabel, comparadas, FONTES_CONFIG
 
     // Cada coluna comparada carrega seu PRÓPRIO status (via _status), usado
     // só para colorir aquela célula — nunca a linha inteira nem a base.
+    // OBS: o rótulo usa só o texto entre colchetes (sem o ícone ▲▼◆ etc.) —
+    // a fonte padrão do jsPDF (Helvetica) não tem esses glifos Unicode e os
+    // renderiza como caracteres corrompidos no PDF final.
     const colsComparadas = comparadas.map(fc => {
       const par = r.pares?.[fc]
       const av = r.avaliacoes?.[fc]
       const statusVal = av?.status
       const cfg = STATUS_CONFIG[statusVal] || {}
-      const tag = statusVal ? `[${cfg.icone || ''} ${cfg.label || statusVal}]\n` : ''
+      const tag = statusVal ? `[${cfg.label || statusVal}]\n` : ''
 
       if (!par?.clausulaB) {
         if (statusVal === 'Exclusiva' && r.clausulaNova) {
@@ -363,8 +366,12 @@ export function gerarPDFNegociacao({ itens, baseLabel, comparadas, FONTES_CONFIG
     head,
     body: body.map(b => b.cells),
     margin: { left: 10, right: 10 },
-    styles: { fontSize: FONT_SIZE, cellPadding: 1.6, valign: 'top', overflow: 'linebreak', lineColor: [226, 232, 240], lineWidth: 0.1 },
+    styles: { fontSize: FONT_SIZE, cellPadding: 1.8, valign: 'top', overflow: 'linebreak', lineColor: [203, 213, 225], lineWidth: 0.15 },
     headStyles: { fillColor: [26, 79, 255], textColor: 255, fontStyle: 'bold', fontSize: 8 },
+    // Zebra-striping bem sutil — só para ajudar o olho a acompanhar a linha
+    // em cláusulas longas que ocupam várias polegadas de altura; não tem
+    // relação com status (isso continua restrito às colunas comparadas).
+    alternateRowStyles: { fillColor: [249, 250, 252] },
     columnStyles,
     didParseCell: (data) => {
       if (data.section !== 'body') return

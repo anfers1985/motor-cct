@@ -87,7 +87,11 @@ export default function Negociacao() {
   // Controles da tabela
   const [fonteBase, setFonteBase] = useState('')
   const [busca, setBusca] = useState('')
-  const [statusAtivos, setStatusAtivos] = useState(new Set(Object.keys(STATUS_CONFIG)))
+  // Filtro por status — agora um Set POR FONTE COMPARADA (não mais um único
+  // agregado), pois o "pior status" agregado escondia, por exemplo, quantas
+  // cláusulas tinham "Redação Diferente" especificamente na CCT vs na Proposta.
+  // undefined/ausente para uma fonte = todos os status ativos para ela.
+  const [statusFiltroPorFonte, setStatusFiltroPorFonte] = useState({})
   const [mostrarDiff, setMostrarDiff] = useState(true)
   const [ordenacao, setOrdenacao] = useState('original')
   const [fonteOrdenacao, setFonteOrdenacao] = useState('') // qual fonte usar como referência ao ordenar por status
@@ -235,7 +239,7 @@ export default function Negociacao() {
         comparativos[fc] = compararInstrumentosNeg(clausulasPorFonte[baseEfetiva], clausulasPorFonte[fc])
       }
       setResultado({ clausulasPorFonte, comparativos, baseEfetiva, comparadas, fontesLista })
-      setStatusAtivos(new Set(Object.keys(STATUS_CONFIG)))
+      setStatusFiltroPorFonte({})
     } catch (e) {
       setErro('Erro ao comparar: ' + e.message)
     }
@@ -305,8 +309,18 @@ export default function Negociacao() {
   })()
 
   // Filtro e ordenação
+  function isFonteStatusAtivo(fc, status) {
+    const set = statusFiltroPorFonte[fc]
+    return !set || set.has(status)
+  }
   const filtrado = linhasResultado.filter(r => {
-    if (!statusAtivos.has(r.statusGeral)) return false
+    // Uma linha só aparece se, para CADA fonte comparada, o status dela
+    // (quando aplicável a esta linha) estiver entre os ativos no filtro
+    // daquela fonte especificamente.
+    for (const fc of resultado?.comparadas || []) {
+      const av = r.avaliacoes?.[fc]
+      if (av && !isFonteStatusAtivo(fc, av.status)) return false
+    }
     const q = busca.toLowerCase()
     if (q) {
       const titulo = r.clausulaBase?.titulo || r.clausulaNova?.titulo || ''
@@ -355,15 +369,34 @@ export default function Negociacao() {
     }
   })()
 
-  const statsStatus = linhasResultado.reduce((acc, r) => { acc[r.statusGeral] = (acc[r.statusGeral] || 0) + 1; return acc }, {})
+  // Estatísticas POR FONTE COMPARADA — cada fonte tem sua própria contagem de
+  // Superior/Inferior/Igual/Redação Diferente/Sem Previsão/Exclusiva, contada
+  // apenas sobre as linhas em que aquela fonte tem avaliação (rows exclusivas
+  // de outra fonte não entram na contagem desta).
+  const statsStatusPorFonte = {}
+  for (const fc of resultado?.comparadas || []) {
+    statsStatusPorFonte[fc] = linhasResultado.reduce((acc, r) => {
+      const st = r.avaliacoes?.[fc]?.status
+      if (st) acc[st] = (acc[st] || 0) + 1
+      return acc
+    }, {})
+  }
 
-  function toggleStatus(s) {
-    setStatusAtivos(prev => {
-      const n = new Set(prev)
-      if (n.has(s)) { if (n.size === 1) return n; n.delete(s) } else n.add(s)
-      return n
+  function toggleFonteStatus(fc, status) {
+    setStatusFiltroPorFonte(prev => {
+      const allKeys = Object.keys(STATUS_CONFIG)
+      const current = prev[fc] ? new Set(prev[fc]) : new Set(allKeys)
+      if (current.has(status)) {
+        if (current.size === 1) return prev // mantém ao menos um ativo
+        current.delete(status)
+      } else {
+        current.add(status)
+      }
+      return { ...prev, [fc]: current }
     })
   }
+  function limparFiltrosFonte() { setStatusFiltroPorFonte({}) }
+  const temFiltroFonteAtivo = Object.values(statusFiltroPorFonte).some(set => set && set.size < Object.keys(STATUS_CONFIG).length)
 
   function toggleCard(idx) { setExpandidos(prev => { const n = new Set(prev); n.has(idx) ? n.delete(idx) : n.add(idx); return n }) }
   function toggleExpandAll() { setModoExpandido(v => !v); setExpandidos(new Set()) }
@@ -476,40 +509,36 @@ export default function Negociacao() {
         <h2 className="font-semibold text-slate-700 text-sm mb-1">⚙️ Fontes para comparação</h2>
         <p className="text-xs text-slate-400 mb-4">Selecione as fontes (mínimo 2) e o instrumento correspondente para cada uma. Prática Interna e Proposta Sindical devem estar cadastradas na aba Instrumentos.</p>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
           {Object.entries(FONTES_CONFIG).map(([chave, cfg]) => {
             const ativo = fontesAtivas.has(chave)
             const opcoesInst = instsParaFonte(chave)
+            const inst = ativo ? todosInstrumentos.find(i => i.id === instSelecionado[chave]) : null
             return (
-              <div key={chave} className={`rounded-xl border-2 p-4 transition-all ${ativo ? 'border-brand-400 bg-brand-50/30' : 'border-slate-200 bg-white opacity-60'}`}>
-                <div className="flex items-start justify-between mb-3">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xl">{cfg.icone}</span>
-                    <div>
-                      <p className={`text-sm font-semibold ${ativo ? 'text-slate-800' : 'text-slate-500'}`}>{cfg.label}</p>
-                      <p className="text-xs text-slate-400">{cfg.tipoInstrumento ? `Tipo: ${cfg.tipoInstrumento}` : 'Instrumento coletivo'}</p>
-                    </div>
+              <div key={chave} className={`rounded-lg border p-2.5 transition-all ${ativo ? 'border-brand-400 bg-brand-50/30' : 'border-slate-200 bg-white opacity-60'}`}>
+                <div className="flex items-center gap-2">
+                  <span className="text-base flex-shrink-0">{cfg.icone}</span>
+                  <div className="min-w-0 flex-1">
+                    <p className={`text-xs font-semibold truncate leading-tight ${ativo ? 'text-slate-800' : 'text-slate-500'}`}>{cfg.label}</p>
+                    {!ativo && <p className="text-[10px] text-slate-400 truncate leading-tight">{cfg.tipoInstrumento || 'Instrumento coletivo'}</p>}
                   </div>
-                  <label className="flex items-center gap-1.5 cursor-pointer select-none">
-                    <input type="checkbox" checked={ativo} onChange={() => toggleFonte(chave)} className="w-4 h-4 accent-brand-600" />
-                    <span className="text-xs text-slate-500">{ativo ? 'Ativo' : 'Inativo'}</span>
+                  <label className="flex items-center gap-1 cursor-pointer select-none flex-shrink-0" title={ativo ? 'Ativo' : 'Inativo'}>
+                    <input type="checkbox" checked={ativo} onChange={() => toggleFonte(chave)} className="w-3.5 h-3.5 accent-brand-600" />
                   </label>
                 </div>
                 {ativo && (
-                  <div>
-                    <label className="label text-xs">Instrumento</label>
-                    <select className="input text-xs" value={instSelecionado[chave]} onChange={e => setInstSelecionado(p => ({ ...p, [chave]: e.target.value }))}>
-                      <option value="">Selecione...</option>
+                  <div className="mt-1.5 flex items-center gap-2">
+                    <select className="input text-xs py-1 flex-1" value={instSelecionado[chave]} onChange={e => setInstSelecionado(p => ({ ...p, [chave]: e.target.value }))}>
+                      <option value="">Selecione o instrumento...</option>
                       {opcoesInst.map(i => <option key={i.id} value={i.id}>{instLabel(i)}</option>)}
                     </select>
-                    {opcoesInst.length === 0 && (
-                      <p className="text-xs text-amber-600 mt-1">⚠️ Nenhum instrumento do tipo "{cfg.tipoInstrumento || (chave === 'act' ? 'ACT' : 'CCT')}" encontrado. Cadastre na aba Instrumentos.</p>
-                    )}
-                    {instSelecionado[chave] && (() => {
-                      const inst = todosInstrumentos.find(i => i.id === instSelecionado[chave])
-                      return inst ? <p className="text-xs text-slate-400 mt-1">Vigência: {inst.vigencia_inicio} a {inst.vigencia_fim}</p> : null
-                    })()}
                   </div>
+                )}
+                {ativo && opcoesInst.length === 0 && (
+                  <p className="text-[10px] text-amber-600 mt-1 leading-tight">⚠️ Nenhum instrumento do tipo "{cfg.tipoInstrumento || (chave === 'act' ? 'ACT' : 'CCT')}" encontrado. Cadastre na aba Instrumentos.</p>
+                )}
+                {ativo && inst && (
+                  <p className="text-[10px] text-slate-400 mt-1 leading-tight">Vigência: {inst.vigencia_inicio} a {inst.vigencia_fim}</p>
                 )}
               </div>
             )
@@ -517,14 +546,14 @@ export default function Negociacao() {
         </div>
 
         {fontesAtivas.size >= 2 && (
-          <div className="mt-4 pt-4 border-t border-slate-100 grid grid-cols-1 md:grid-cols-2 gap-4 items-end">
+          <div className="mt-3 pt-3 border-t border-slate-100 grid grid-cols-1 md:grid-cols-2 gap-3 items-end">
             <div>
               <label className="label text-xs">📌 Fonte-base para comparação</label>
-              <select className="input text-xs" value={fonteBase} onChange={e => setFonteBase(e.target.value)}>
+              <select className="input text-xs py-1" value={fonteBase} onChange={e => setFonteBase(e.target.value)}>
                 <option value="">Automática (primeira fonte ativa)</option>
                 {[...fontesAtivas].map(f => <option key={f} value={f}>{FONTES_CONFIG[f]?.icone} {FONTES_CONFIG[f]?.label}</option>)}
               </select>
-              <p className="text-xs text-slate-400 mt-0.5">As demais fontes serão avaliadas em relação à base</p>
+              <p className="text-[10px] text-slate-400 mt-0.5">As demais fontes serão avaliadas em relação à base</p>
             </div>
             <button className="btn-primary w-full" onClick={comparar} disabled={loading}>
               {loading ? '⏳ Comparando...' : '⚖️ Gerar comparativo'}
@@ -558,16 +587,35 @@ export default function Negociacao() {
             </div>
           </div>
 
-          {/* Cards de status */}
-          <div className="grid grid-cols-5 gap-2 mb-4">
-            {Object.entries(STATUS_CONFIG).map(([s, cfg]) => (
-              <button key={s} onClick={() => toggleStatus(s)}
-                className={`p-2 rounded-lg border-2 text-center transition-all select-none ${statusAtivos.has(s) ? cfg.cls + ' shadow-sm' : 'border-slate-200 bg-white opacity-40 hover:opacity-60'}`}>
-                <p className="text-lg font-bold">{statsStatus[s] || 0}</p>
-                <p className="text-[10px] font-medium leading-tight">{cfg.icone} {cfg.label || s}</p>
-              </button>
+          {/* Cards de status — um grupo POR FONTE COMPARADA, para refletir de
+              fato a situação de cada fonte frente à base e permitir filtrar
+              por fonte (ex.: só as cláusulas em que a CCT está "Redação
+              Diferente", independente do que a Proposta Sindical mostra). */}
+          <div className="mb-4 space-y-2">
+            {resultado.comparadas.map(fc => (
+              <div key={fc} className="flex items-center gap-1.5 flex-wrap">
+                <span className="text-xs font-semibold text-slate-500 w-32 flex-shrink-0 truncate">
+                  {FONTES_CONFIG[fc]?.icone} {FONTES_CONFIG[fc]?.label}
+                </span>
+                {Object.entries(STATUS_CONFIG).map(([s, cfg]) => {
+                  const count = statsStatusPorFonte[fc]?.[s] || 0
+                  const ativo = isFonteStatusAtivo(fc, s)
+                  return (
+                    <button key={s} onClick={() => toggleFonteStatus(fc, s)}
+                      title={`${cfg.label}: ${count} cláusula(s) — clique para incluir/excluir do filtro`}
+                      className={`px-2 py-1 rounded-md border text-center transition-all select-none ${ativo ? cfg.cls + ' shadow-sm' : 'border-slate-200 bg-white opacity-40 hover:opacity-60'}`}>
+                      <span className="text-xs font-bold">{count}</span>
+                      <span className="text-[10px] font-medium ml-1">{cfg.icone} {cfg.label || s}</span>
+                    </button>
+                  )
+                })}
+              </div>
             ))}
+            {temFiltroFonteAtivo && (
+              <button onClick={limparFiltrosFonte} className="text-[11px] text-brand-600 hover:underline">↺ Limpar filtros por fonte</button>
+            )}
           </div>
+
 
           {/* Barra de controles */}
           <div className="flex gap-2 mb-3 flex-wrap items-center">

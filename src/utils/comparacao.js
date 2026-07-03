@@ -66,13 +66,26 @@ export function similaridade(textoA, textoB) {
 }
 
 // ─── Extração de valores numéricos ───────────────────────────────────────────
-// Extrai percentuais e valores monetários de um texto
+// Extrai percentuais e valores monetários de um texto.
+// IMPORTANTE (percentuaisHeadline): cláusulas longas costumam ter vários
+// percentuais incidentais ao longo do texto (multa de atraso, juros de mora,
+// desconto de PAT etc.) que nada têm a ver com o percentual substantivo da
+// cláusula (ex.: a alíquota de contribuição). Usar o maior percentual do
+// texto INTEIRO pode comparar, por coincidência, duas multas de mesmo valor
+// e declarar "Igual" quando o dado que realmente importa (ex.: 1% vs 1%) nem
+// chegou a ser olhado. Por isso extraímos também os percentuais que aparecem
+// só na "manchete" da cláusula (primeiros caracteres), usados com prioridade.
+const JANELA_HEADLINE = 320
+
 function extrairNumericos(texto) {
-  if (!texto) return { percentuais: [], monetarios: [], todos: [] }
+  if (!texto) return { percentuais: [], percentuaisHeadline: [], monetarios: [], todos: [] }
   const t = texto.replace(/\./g, '').replace(/,/g, '.')
 
   // Percentuais: ex "5,32%", "4.11%"
   const percentuais = [...(t.matchAll(/(\d+(?:\.\d+)?)\s*%/g) || [])]
+    .map(m => parseFloat(m[1])).filter(n => !isNaN(n) && n > 0 && n < 200)
+
+  const percentuaisHeadline = [...(t.slice(0, JANELA_HEADLINE).matchAll(/(\d+(?:\.\d+)?)\s*%/g) || [])]
     .map(m => parseFloat(m[1])).filter(n => !isNaN(n) && n > 0 && n < 200)
 
   // Valores monetários: ex "R$ 3.190,00", "R$ 30,00"
@@ -80,7 +93,7 @@ function extrairNumericos(texto) {
     .map(m => parseFloat(m[1].replace(/\./g, '').replace(',', '.')))
     .filter(n => !isNaN(n) && n > 0)
 
-  return { percentuais, monetarios, todos: [...percentuais, ...monetarios] }
+  return { percentuais, percentuaisHeadline, monetarios, todos: [...percentuais, ...monetarios] }
 }
 
 // ─── Nova terminologia de status ─────────────────────────────────────────────
@@ -240,13 +253,24 @@ export function avaliarSuperioridade(textoBase, textoComparado, tituloClausula =
   // incidental e idêntico nos dois textos (ex: desconto de 20% do PAT, presente
   // tanto na cláusula de Auxílio Refeição do ACT quanto da CCT) mascare uma
   // diferença real no valor em R$ do benefício, que é o dado substantivo.
-  const percDiferem = numBase.percentuais.length > 0 && numComp.percentuais.length > 0
-    && Math.abs(Math.max(...numBase.percentuais) - Math.max(...numComp.percentuais)) >= 0.01
+  //
+  // Além disso, só usamos os percentuais como critério quando AMBOS os textos
+  // trazem um percentual na "manchete" (início da cláusula) — se um dos lados
+  // só tem percentuais incidentais (multa de atraso, juros de mora) espalhados
+  // no meio de um texto longo, comparar por "maior percentual do texto inteiro"
+  // pode coincidentemente casar duas multas de mesmo valor e declarar "Igual"
+  // sem nunca ter olhado o dado que de fato importa na cláusula.
+  const temHeadlineAmbos = numBase.percentuaisHeadline.length > 0 && numComp.percentuaisHeadline.length > 0
+  const percBaseUsar = temHeadlineAmbos ? numBase.percentuaisHeadline : numBase.percentuais
+  const percCompUsar = temHeadlineAmbos ? numComp.percentuaisHeadline : numComp.percentuais
+
+  const percDiferem = percBaseUsar.length > 0 && percCompUsar.length > 0
+    && Math.abs(Math.max(...percBaseUsar) - Math.max(...percCompUsar)) >= 0.01
   const monetDisponveis = numBase.monetarios.length > 0 && numComp.monetarios.length > 0
 
-  if (numBase.percentuais.length > 0 && numComp.percentuais.length > 0 && (percDiferem || !monetDisponveis)) {
-    const maxBase = Math.max(...numBase.percentuais)
-    const maxComp = Math.max(...numComp.percentuais)
+  if (temHeadlineAmbos && percBaseUsar.length > 0 && percCompUsar.length > 0 && (percDiferem || !monetDisponveis)) {
+    const maxBase = Math.max(...percBaseUsar)
+    const maxComp = Math.max(...percCompUsar)
     const diff = maxComp - maxBase
     const diffPct = Math.abs(diff).toFixed(2).replace('.', ',')
     if (Math.abs(diff) < 0.01) {
