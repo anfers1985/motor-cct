@@ -84,34 +84,40 @@ function parseJSON(raw) {
   let text = (raw || '').trim()
   // Remove fences markdown
   text = text.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim()
-  // Para modelos thinking: o JSON pode vir após texto de raciocínio — pega do último '[' ao último ']'
-  const start = text.lastIndexOf('[')
-  const end = text.lastIndexOf(']')
-  if (start === -1 || end === -1 || end <= start) {
-    // Tentar do primeiro '[' ao último ']'
-    const s2 = text.indexOf('[')
-    const e2 = text.lastIndexOf(']')
-    if (s2 !== -1 && e2 > s2) {
-      try { return JSON.parse(text.slice(s2, e2 + 1)) } catch {}
-    }
-    throw new Error(`Resposta da IA não contém JSON válido. Início da resposta: "${text.slice(0, 200)}"`)
+
+  // O array de saida SEMPRE comeca no primeiro '[' da resposta (o modelo ja
+  // vem sem texto de raciocinio -- isso e filtrado antes, em geminiCallRaw).
+  // Antes usava-se o ULTIMO '[' pensando em pular raciocinio de modelos
+  // "thinking", o que causava um bug: uma clausula com
+  // "categorias_adicionais": [] perto do fim da resposta tinha seu '['
+  // escolhido como inicio do array, gerando uma fatia invalida a partir do
+  // meio de um objeto.
+  const primeiro = text.indexOf('[')
+  if (primeiro === -1) {
+    throw new Error(`Resposta da IA não contém JSON válido. Início da resposta: "${text.slice(0, 300)}"`)
   }
-  try {
-    return JSON.parse(text.slice(start, end + 1))
-  } catch {
-    // Tentar reparar JSON truncado
-    try {
-      let t = text.slice(start)
-      const opens = (t.match(/\{/g) || []).length
-      const closes = (t.match(/\}/g) || []).length
-      if (opens > closes) {
-        for (let i = 0; i < opens - closes; i++) t += '}'
-        if (!t.endsWith(']')) t += ']'
-        return JSON.parse(t)
-      }
-    } catch {}
-    throw new Error(`JSON inválido na resposta da IA. Primeiros 300 chars: "${text.slice(start, start + 300)}"`)
+
+  // 1) Tentativa direta: da primeira '[' até a última ']' de todo o texto.
+  //    Cobre o caso normal (resposta completa e bem formada).
+  const ultimoFecha = text.lastIndexOf(']')
+  if (ultimoFecha > primeiro) {
+    try { return JSON.parse(text.slice(primeiro, ultimoFecha + 1)) } catch {}
   }
+
+  // 2) Reparo de truncamento real: em vez de cortar pela última ']' do texto
+  //    (que pode ser de um array interno vazio e ficar ANTES do fechamento do
+  //    objeto atual, zerando tudo), usa-se todo o restante a partir do '[' e
+  //    corta no último "}" completo — ou seja, no fim da última cláusula
+  //    íntegra — descartando só a cláusula incompleta do final.
+  const restante = text.slice(primeiro).replace(/,\s*$/, '')
+  const ultimoFechamentoObjeto = restante.lastIndexOf('}')
+  if (ultimoFechamentoObjeto !== -1) {
+    let reparado = restante.slice(0, ultimoFechamentoObjeto + 1)
+    if (!reparado.trim().endsWith(']')) reparado += ']'
+    try { return JSON.parse(reparado) } catch {}
+  }
+
+  throw new Error(`JSON inválido na resposta da IA. Início da resposta: "${text.slice(primeiro, primeiro + 300)}"`)
 }
 
 // Normaliza a(s) classificação(ões) de cada cláusula retornada pela IA contra a taxonomia
