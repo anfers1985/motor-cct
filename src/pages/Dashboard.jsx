@@ -100,7 +100,7 @@ export default function Dashboard() {
         buscarIndices(12),
         supabase.from('clausulas')
           .select('percentual, instrumento_id, instrumentos(vigencia_inicio, tipo)')
-          .eq('categoria', 'Remuneração')
+          .eq('categoria', 'Remuneração e Reajuste')
           .ilike('subcategoria', '%reajuste%')
           .eq('user_id', user.id),
       ])
