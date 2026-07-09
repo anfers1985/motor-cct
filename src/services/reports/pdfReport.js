@@ -278,6 +278,22 @@ export function gerarPDFComparativo(resultado, instrumentoA, instrumentoB) {
 // nunca em uma coluna solta ao lado da base, para não sugerir que o
 // resultado é um atributo da cláusula-base (ACT). A coluna Base fica sempre
 // neutra (sem cor), assim como a coluna Veredito.
+// A fonte padrão do jsPDF (Helvetica, codificação WinAnsi) não tem glifos
+// para certos caracteres Unicode usados nos textos gerados dinamicamente
+// (ex.: a seta "→" nos resumos de diferença em utils/comparacao.js). Quando
+// isso acontece, o caractere é renderizado como lixo visual no PDF (algo
+// como "!'"), mesmo que o texto apareça certinho na tela (HTML renderiza
+// qualquer Unicode). Esta função troca esses caracteres por equivalentes
+// ASCII SÓ para o PDF — a UI continua mostrando a seta normalmente.
+function pdfSafe(str) {
+  if (str === null || str === undefined) return str
+  return String(str)
+    .replace(/→/g, '->')
+    .replace(/←/g, '<-')
+    .replace(/[▲▼◆]/g, '')
+    .replace(/−/g, '-') // U+2212 (sinal de menos matemático) ≠ hífen comum
+}
+
 export function gerarPDFNegociacao({ itens, baseLabel, comparadas, FONTES_CONFIG, STATUS_CONFIG, fraseVeredito }) {
   const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' })
   addHeader(
@@ -309,15 +325,16 @@ export function gerarPDFNegociacao({ itens, baseLabel, comparadas, FONTES_CONFIG
     const titulo = r.clausulaBase?.titulo || r.clausulaNova?.titulo || '—'
     const cabecalho = (numero ? `Nº ${numero} — ` : '') + titulo
 
-    const colBase = r.clausulaBase
+    const colBase = pdfSafe(r.clausulaBase
       ? `${cabecalho}\n\n${r.clausulaBase.conteudo || ''}`
-      : `${titulo}\n\n— exclusiva da(s) fonte(s) comparada(s) —`
+      : `${titulo}\n\n— exclusiva da(s) fonte(s) comparada(s) —`)
 
     // Cada coluna comparada carrega seu PRÓPRIO status (via _status), usado
     // só para colorir aquela célula — nunca a linha inteira nem a base.
-    // OBS: o rótulo usa só o texto entre colchetes (sem o ícone ▲▼◆ etc.) —
-    // a fonte padrão do jsPDF (Helvetica) não tem esses glifos Unicode e os
-    // renderiza como caracteres corrompidos no PDF final.
+    // OBS: o rótulo usa só o texto entre colchetes (sem o ícone ▲▼◆ etc.), e
+    // todo o conteúdo passa por pdfSafe() — a fonte padrão do jsPDF
+    // (Helvetica) não tem certos glifos Unicode (ex.: seta "→" nos resumos
+    // de diferença) e os renderiza como caracteres corrompidos no PDF final.
     const colsComparadas = comparadas.map(fc => {
       const par = r.pares?.[fc]
       const av = r.avaliacoes?.[fc]
@@ -328,22 +345,22 @@ export function gerarPDFNegociacao({ itens, baseLabel, comparadas, FONTES_CONFIG
       if (!par?.clausulaB) {
         if (statusVal === 'Exclusiva' && r.clausulaNova) {
           const cn = r.clausulaNova
-          return { content: `${tag}${cn.numero ? `Nº ${cn.numero} — ` : ''}${cn.titulo || ''}\n\n${cn.conteudo || ''}`, _status: statusVal }
+          return { content: pdfSafe(`${tag}${cn.numero ? `Nº ${cn.numero} — ` : ''}${cn.titulo || ''}\n\n${cn.conteudo || ''}`), _status: statusVal }
         }
-        return { content: `${tag}Não encontrado nesta fonte`, _status: statusVal }
+        return { content: pdfSafe(`${tag}Não encontrado nesta fonte`), _status: statusVal }
       }
       const num = par.clausulaB.numero ? `Nº ${par.clausulaB.numero} — ` : ''
-      return { content: `${tag}${num}${par.clausulaB.titulo || ''}\n\n${par.clausulaB.conteudo || ''}`, _status: statusVal }
+      return { content: pdfSafe(`${tag}${num}${par.clausulaB.titulo || ''}\n\n${par.clausulaB.conteudo || ''}`), _status: statusVal }
     })
 
-    const veredito = comparadas.map(fc => {
+    const veredito = pdfSafe(comparadas.map(fc => {
       const av = r.avaliacoes?.[fc]
       if (!av?.status) return null
       const fl = FONTES_CONFIG[fc]?.label || fc
       const cfg = STATUS_CONFIG[av.status] || {}
       const headline = fraseVeredito(av.status, baseLabel, fl, !!r.clausulaBase)
       return `[${cfg.label || av.status}] ${headline}${av.resumo ? '\n' + av.resumo : ''}`
-    }).filter(Boolean).join('\n\n')
+    }).filter(Boolean).join('\n\n'))
 
     return {
       cells: [colBase, ...colsComparadas, veredito],
