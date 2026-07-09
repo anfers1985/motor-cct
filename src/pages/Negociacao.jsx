@@ -1,7 +1,9 @@
 import { useState, useEffect, useCallback } from 'react'
 import { supabase } from '../services/supabase'
 import { useAuth } from '../hooks/useAuth'
-import { compararInstrumentosNeg, avaliarSuperioridade, STATUS_CONFIG, fraseVeredito } from '../utils/comparacao'
+import { compararInstrumentosNeg, avaliarSuperioridade, aplicarParesSugeridosIA, STATUS_CONFIG, fraseVeredito } from '../utils/comparacao'
+import { getAIConfig } from '../services/ai/index'
+import { sugerirParesSemanticos } from '../services/ai/pareamento'
 import { toNumeroOrdinal } from '../utils/ordenacao'
 import CheckList from '../components/UI/CheckList'
 import StepCard from '../components/UI/StepCard'
@@ -83,6 +85,8 @@ export default function Negociacao() {
   const [resultado, setResultado] = useState(null)
   const [loading, setLoading] = useState(false)
   const [erro, setErro] = useState('')
+  const [pareandoIA, setPareandoIA] = useState(false)
+  const [statusPareamentoIA, setStatusPareamentoIA] = useState('')
 
   // Controles da tabela
   const [fonteBase, setFonteBase] = useState('')
@@ -246,7 +250,37 @@ export default function Negociacao() {
     setLoading(false)
   }
 
-  // ─── Monta as linhas do comparativo ──────────────────────────────────────────
+  // ─── Pareamento assistido por IA (refinamento opcional pós-comparação) ─────
+  // O casamento por Jaccard tem um teto estrutural para cláusulas que tratam do
+  // mesmo tema com vocabulário muito diferente (ver comentário em
+  // utils/comparacao.js::aplicarParesSugeridosIA). Esta função roda um segundo
+  // passo, best-effort, chamando a IA já configurada só sobre as cláusulas que
+  // sobraram sem par — nunca sobre o documento inteiro de novo.
+  async function pareamentoIA() {
+    if (!resultado) return
+    const config = getAIConfig()
+    if (!config?.provedor || !config?.chave) {
+      return setErro('Configure um provedor de IA nas Configurações para usar o pareamento assistido.')
+    }
+    setPareandoIA(true); setErro(''); setStatusPareamentoIA('')
+    try {
+      const novosComparativos = { ...resultado.comparativos }
+      for (const fc of resultado.comparadas) {
+        const comp = novosComparativos[fc] || []
+        const leftoverA = comp.filter(r => r.status.label === 'SUPRIMIDA').map(r => r.clausulaA)
+        const leftoverB = comp.filter(r => r.status.label === 'NOVA').map(r => r.clausulaB)
+        if (!leftoverA.length || !leftoverB.length) continue
+        const sugestoes = await sugerirParesSemanticos(leftoverA, leftoverB, setStatusPareamentoIA)
+        novosComparativos[fc] = aplicarParesSugeridosIA(comp, sugestoes)
+      }
+      setResultado({ ...resultado, comparativos: novosComparativos })
+    } catch (e) {
+      setErro('Erro no pareamento por IA: ' + e.message)
+    }
+    setPareandoIA(false)
+  }
+
+
   const linhasResultado = (() => {
     if (!resultado) return []
     const { clausulasPorFonte, comparativos, baseEfetiva, comparadas } = resultado
@@ -581,7 +615,12 @@ export default function Negociacao() {
                 ))}
               </p>
             </div>
-            <div className="flex gap-2">
+            <div className="flex gap-2 items-center">
+              {statusPareamentoIA && <span className="text-[10px] text-slate-400 max-w-[220px] truncate" title={statusPareamentoIA}>{statusPareamentoIA}</span>}
+              <button onClick={pareamentoIA} disabled={pareandoIA} className="btn-secondary text-xs py-1"
+                title="Usa a IA configurada para tentar parear, entre as cláusulas que ficaram sem correspondência, aquelas que tratam do mesmo tema com redação muito diferente (ex.: 'Banco de Horas' vs 'Regime de Compensação Horária').">
+                {pareandoIA ? '⏳ Pareando com IA...' : '🤖 Pareamento com IA'}
+              </button>
               <button onClick={exportarExcel} className="btn-secondary text-xs py-1">📊 {selecionados.size > 0 ? `Excel (${selecionados.size})` : 'Excel'}</button>
               <button onClick={exportarPDF}   className="btn-secondary text-xs py-1">📄 {selecionados.size > 0 ? `PDF (${selecionados.size})` : 'PDF'}</button>
             </div>
@@ -753,6 +792,9 @@ export default function Negociacao() {
                               <p className="text-xs font-bold text-slate-600 uppercase tracking-wide">
                                 {cfgFonte?.icone} {cfgFonte?.label}
                                 {par?.clausulaB?.numero && <span className="font-normal normal-case text-slate-400"> · Nº {par.clausulaB.numero}</span>}
+                                {par?.origemIA && (
+                                  <span title="Este pareamento foi sugerido pela IA (redação muito diferente para o casamento automático por similaridade) — revise antes de considerar definitivo." className="ml-1 font-normal normal-case text-[10px] px-1.5 py-0.5 rounded-full bg-indigo-100 text-indigo-700 border border-indigo-200">🤖 pareado por IA</span>
+                                )}
                               </p>
                               <span title={av.resumo} className={`text-xs px-2 py-0.5 rounded-full font-semibold border ${cfg2.cls || 'bg-slate-100 text-slate-500'}`}>
                                 {cfg2.icone} {cfg2.relLabel || av.status || '—'}

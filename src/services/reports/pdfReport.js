@@ -365,7 +365,22 @@ export function gerarPDFNegociacao({ itens, baseLabel, comparadas, FONTES_CONFIG
     showHead: 'everyPage',
     head,
     body: body.map(b => b.cells),
-    margin: { left: 10, right: 10 },
+    // margin.bottom reserva espaço para o rodapé (addFooter escreve em
+    // pageH-4 ≈ 206mm no modo paisagem) — sem isso, o autoTable calcula o
+    // fim da área útil sem saber que o rodapé vai ocupar aquela faixa, e a
+    // última linha de cada página pode terminar colada/sobreposta ao rodapé.
+    margin: { left: 10, right: 10, top: 34, bottom: 16 },
+    // rowPageBreak: 'avoid' (em vez do padrão 'auto') evita que uma linha
+    // seja partida bem perto do fim da página, quando sobra pouquíssimo
+    // espaço — é justamente esse cenário de "quebra ruim" que produzia
+    // linhas cortadas/sobrepostas no meio do conteúdo. Com 'avoid', se a
+    // linha não couber inteira no espaço restante, o autoTable pula para
+    // uma página nova ANTES de começar a desenhá-la, garantindo até ~250mm
+    // de espaço livre. Linhas realmente maiores que uma página inteira
+    // (cláusulas muito longas) ainda quebram entre páginas — isso é
+    // inevitável — mas agora a quebra começa sempre no topo de uma página
+    // limpa, não no meio de uma margem apertada.
+    rowPageBreak: 'avoid',
     styles: { fontSize: FONT_SIZE, cellPadding: 1.8, valign: 'top', overflow: 'linebreak', lineColor: [203, 213, 225], lineWidth: 0.15 },
     headStyles: { fillColor: [26, 79, 255], textColor: 255, fontStyle: 'bold', fontSize: 8 },
     // Zebra-striping bem sutil — só para ajudar o olho a acompanhar a linha

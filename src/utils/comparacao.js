@@ -23,8 +23,16 @@ const SINONIMOS_LAB = {
   // plano variável
   'ppr': 'variavel', 'plr': 'variavel', 'participacao': 'variavel', 'resultado': 'variavel',
   'gratificacao': 'variavel', 'bonus': 'variavel',
-  // jornada / banco
+  // jornada / banco de horas / compensação — documentos diferentes tratam o
+  // mesmo mecanismo (banco de horas) com vocabulário bem diferente: um lado
+  // fala em "banco de horas", o outro em "regime de compensação horária".
+  // Sem normalizar as duas famílias de termos para a mesma forma canônica,
+  // essas cláusulas nunca cruzam o limiar de pareamento e acabam marcadas
+  // (erradamente) como exclusivas de cada fonte.
   'banco': 'jornada', 'horas': 'jornada', 'jornada': 'jornada', 'horario': 'jornada',
+  'horaria': 'jornada', 'horarios': 'jornada', 'horarias': 'jornada',
+  'compensacao': 'jornada', 'compensar': 'jornada', 'compensado': 'jornada',
+  'compensada': 'jornada', 'compensatoria': 'jornada', 'compensatorio': 'jornada',
   // vigência
   'vigencia': 'vigencia', 'periodo': 'vigencia', 'abrangencia': 'abrangencia',
 }
@@ -67,25 +75,43 @@ export function similaridade(textoA, textoB) {
 
 // ─── Extração de valores numéricos ───────────────────────────────────────────
 // Extrai percentuais e valores monetários de um texto.
-// IMPORTANTE (percentuaisHeadline): cláusulas longas costumam ter vários
-// percentuais incidentais ao longo do texto (multa de atraso, juros de mora,
-// desconto de PAT etc.) que nada têm a ver com o percentual substantivo da
-// cláusula (ex.: a alíquota de contribuição). Usar o maior percentual do
-// texto INTEIRO pode comparar, por coincidência, duas multas de mesmo valor
-// e declarar "Igual" quando o dado que realmente importa (ex.: 1% vs 1%) nem
-// chegou a ser olhado. Por isso extraímos também os percentuais que aparecem
-// só na "manchete" da cláusula (primeiros caracteres), usados com prioridade.
-const JANELA_HEADLINE = 320
+// IMPORTANTE (percentuaisHeadline / monetariosHeadline): cláusulas longas
+// costumam ter vários números incidentais ao longo do texto — multa de
+// atraso, juros de mora, teto para categoria diferente (ex.: piso geral vs.
+// piso de Supervisor/Gerente definido só num parágrafo à parte) — que nada
+// têm a ver com o valor substantivo da cláusula (a alíquota de contribuição,
+// o piso salarial geral etc.). Usar o maior valor do texto INTEIRO pode
+// comparar, por coincidência ou por mistura de categorias, dois números que
+// não representam o mesmo conceito — ex.: comparar o piso de "Supervisor ou
+// Gerente" do instrumento A com o piso GERAL do instrumento B.
+//
+// Por isso extraímos também os valores que aparecem só na "manchete" da
+// cláusula — definida como o texto ANTES do primeiro marcador de parágrafo
+// ("PARÁGRAFO PRIMEIRO", "PARÁGRAFO ÚNICO" etc.), que normalmente carrega o
+// valor geral/principal da cláusula, deixando de fora valores específicos de
+// subcategorias, multas e outras exceções tratadas nos parágrafos
+// seguintes. Quando a cláusula não tem nenhum marcador de parágrafo (ex.:
+// cláusulas curtas de 1-2 frases), a manchete cai de volta para um recorte
+// limitado do início do texto.
+const CAPUT_MAX = 900
+
+function extrairCaput(texto) {
+  const m = texto.match(/PAR[AÁ]GRAFO\s/i)
+  const limite = m ? Math.min(m.index, CAPUT_MAX) : CAPUT_MAX
+  return texto.slice(0, limite)
+}
 
 function extrairNumericos(texto) {
-  if (!texto) return { percentuais: [], percentuaisHeadline: [], monetarios: [], todos: [] }
+  if (!texto) return { percentuais: [], percentuaisHeadline: [], monetarios: [], monetariosHeadline: [], todos: [] }
+  const caput = extrairCaput(texto)
   const t = texto.replace(/\./g, '').replace(/,/g, '.')
+  const tCaput = caput.replace(/\./g, '').replace(/,/g, '.')
 
   // Percentuais: ex "5,32%", "4.11%"
   const percentuais = [...(t.matchAll(/(\d+(?:\.\d+)?)\s*%/g) || [])]
     .map(m => parseFloat(m[1])).filter(n => !isNaN(n) && n > 0 && n < 200)
 
-  const percentuaisHeadline = [...(t.slice(0, JANELA_HEADLINE).matchAll(/(\d+(?:\.\d+)?)\s*%/g) || [])]
+  const percentuaisHeadline = [...(tCaput.matchAll(/(\d+(?:\.\d+)?)\s*%/g) || [])]
     .map(m => parseFloat(m[1])).filter(n => !isNaN(n) && n > 0 && n < 200)
 
   // Valores monetários: ex "R$ 3.190,00", "R$ 30,00"
@@ -93,7 +119,11 @@ function extrairNumericos(texto) {
     .map(m => parseFloat(m[1].replace(/\./g, '').replace(',', '.')))
     .filter(n => !isNaN(n) && n > 0)
 
-  return { percentuais, percentuaisHeadline, monetarios, todos: [...percentuais, ...monetarios] }
+  const monetariosHeadline = [...(caput.matchAll(/R\$\s*([\d.]+(?:,\d{2})?)/g) || [])]
+    .map(m => parseFloat(m[1].replace(/\./g, '').replace(',', '.')))
+    .filter(n => !isNaN(n) && n > 0)
+
+  return { percentuais, percentuaisHeadline, monetarios, monetariosHeadline, todos: [...percentuais, ...monetarios] }
 }
 
 // ─── Nova terminologia de status ─────────────────────────────────────────────
@@ -294,9 +324,20 @@ export function avaliarSuperioridade(textoBase, textoComparado, tituloClausula =
   }
 
   // Prioridade 2: valores monetários
-  if (numBase.monetarios.length > 0 && numComp.monetarios.length > 0) {
-    const maxBase = Math.max(...numBase.monetarios)
-    const maxComp = Math.max(...numComp.monetarios)
+  // Mesma lógica do headline usado para percentuais (ver extrairNumericos):
+  // quando a cláusula reúne valores de categorias diferentes (ex.: piso
+  // geral vs. piso de Supervisor/Gerente, previsto só num parágrafo à
+  // parte), usar o maior valor do texto INTEIRO compararia acidentalmente
+  // dois números que não representam o mesmo conceito. O valor do "caput"
+  // (antes do primeiro PARÁGRAFO) costuma ser o valor geral/substantivo da
+  // cláusula — por isso tem prioridade quando presente nos dois lados.
+  const temMonetHeadlineAmbos = numBase.monetariosHeadline.length > 0 && numComp.monetariosHeadline.length > 0
+  const monetBaseUsar = temMonetHeadlineAmbos ? numBase.monetariosHeadline : numBase.monetarios
+  const monetCompUsar = temMonetHeadlineAmbos ? numComp.monetariosHeadline : numComp.monetarios
+
+  if (monetBaseUsar.length > 0 && monetCompUsar.length > 0) {
+    const maxBase = Math.max(...monetBaseUsar)
+    const maxComp = Math.max(...monetCompUsar)
     const diff = maxComp - maxBase
     const fmt = v => 'R$ ' + v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
     if (Math.abs(diff) < 0.01) {
@@ -504,5 +545,39 @@ export function compararInstrumentosNeg(clausulasA, clausulasB) {
     if (!regUsedB.has(c.id))
       resultado.push({ clausulaA: null, clausulaB: c, score: 0, status: { label: 'NOVA', cls: 'bg-purple-100 text-purple-800', order: 3 } })
 
+  return resultado
+}
+
+// ─── Pareamento assistido por IA (pós-processamento opcional) ────────────────
+// O casamento por Jaccard (matchGrupoNeg) tem um teto estrutural: quando dois
+// instrumentos tratam da MESMA cláusula com vocabulário muito diferente (ex.:
+// "Banco de Horas" vs "Regime de Compensação Horária"), o score fica na faixa
+// de ruído — próximo ou abaixo de comparações genuinamente sem relação (ex.:
+// duas cláusulas que só coincidem por compartilhar o mesmo número ordinal).
+// Baixar o limiar de corte troca um falso-negativo por um falso-positivo em
+// outro par, então não é seguro resolver isso só com regex/Jaccard.
+//
+// Esta função aplica sugestões de pareamento vindas de uma IA (ver
+// services/ai/pareamento.js) sobre o resultado de compararInstrumentosNeg,
+// substituindo os pares SUPRIMIDA/NOVA indicados por uma linha comparada de
+// verdade — marcada com origemIA:true para que a interface deixe claro que
+// aquele pareamento foi sugerido por IA, não por correspondência textual.
+export function aplicarParesSugeridosIA(comparativo, sugestoes) {
+  if (!sugestoes?.length) return comparativo
+  const resultado = [...comparativo]
+  for (const { idA, idB } of sugestoes) {
+    const idxA = resultado.findIndex(r => r.clausulaA?.id === idA && !r.clausulaB && r.status.label === 'SUPRIMIDA')
+    const idxB = resultado.findIndex(r => r.clausulaB?.id === idB && !r.clausulaA && r.status.label === 'NOVA')
+    if (idxA === -1 || idxB === -1) continue // sugestão aponta para algo já usado ou inexistente — ignora com segurança
+    const a = resultado[idxA].clausulaA
+    const b = resultado[idxB].clausulaB
+    const score = similaridade(a.conteudo, b.conteudo)
+    const status = { ...classificarSimilaridade(score, a.conteudo, b.conteudo), label: 'ALTERADA' }
+    const merged = { clausulaA: a, clausulaB: b, score, status, origemIA: true }
+    // Remove as duas linhas soltas e insere a linha mesclada no lugar da primeira
+    const menor = Math.min(idxA, idxB), maior = Math.max(idxA, idxB)
+    resultado.splice(maior, 1)
+    resultado.splice(menor, 1, merged)
+  }
   return resultado
 }
