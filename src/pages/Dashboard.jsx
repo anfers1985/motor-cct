@@ -41,6 +41,25 @@ function acumuladoLabel(valores) {
   return v == null ? '—' : v.toFixed(2).replace('.', ',') + '%'
 }
 
+// Média aritmética simples dos valores não-nulos — usada para o "Reajuste
+// médio", que NÃO deve ser calculado como acumulado() composto. Cada reajuste
+// vem de um instrumento (CCT/ACT) diferente, aplicado na sua própria data-base,
+// sem qualquer relação sequencial entre eles — não é uma série de variações
+// mensais consecutivas como IPCA/INPC. Compor (1+a)(1+b)(1+c)-1 entre reajustes
+// de instrumentos distintos não tem significado econômico e infla o resultado
+// (ex.: 3 reajustes de ~5-7% cada, isolados em meses diferentes, comportavam
+// como 16%+ "acumulado" quando o que faz sentido reportar é a média: ~6%).
+function mediaSimples(valores) {
+  const validos = valores.filter(v => v != null)
+  if (!validos.length) return null
+  return validos.reduce((a, b) => a + b, 0) / validos.length
+}
+
+function mediaLabel(valores) {
+  const v = mediaSimples(valores)
+  return v == null ? '—' : v.toFixed(2).replace('.', ',') + '%'
+}
+
 export default function Dashboard() {
   const { user } = useAuth()
   const [stats, setStats] = useState({})
@@ -170,7 +189,7 @@ export default function Dashboard() {
       'Reajuste médio mensal (%)': '',
       'IPCA acumulado (%)': acumulado(chartData.ipcaMensal)?.toFixed(4) ?? '',
       'INPC acumulado (%)': acumulado(chartData.inpcMensal)?.toFixed(4) ?? '',
-      'Reajuste médio acumulado (%)': acumulado(chartData.reajusteMensal)?.toFixed(4) ?? '',
+      'Reajuste médio acumulado (%)': mediaSimples(chartData.reajusteMensal)?.toFixed(4) ?? '',
     })
     const ws = XLSX.utils.json_to_sheet(rows)
     ws['!cols'] = [{ wch: 14 }, { wch: 20 }, { wch: 20 }, { wch: 28 }, { wch: 22 }, { wch: 22 }, { wch: 30 }]
@@ -307,9 +326,9 @@ export default function Dashboard() {
                   <span className="text-xs text-slate-500">
                     INPC 12m: <span className="font-semibold text-purple-600">{acumuladoLabel(chartData.inpcMensal)}</span>
                   </span>
-                  {acumulado(chartData.reajusteMensal) != null && (
+                  {mediaSimples(chartData.reajusteMensal) != null && (
                     <span className="text-xs text-slate-500">
-                      Reajuste médio: <span className="font-semibold text-emerald-600">{acumuladoLabel(chartData.reajusteMensal)}</span>
+                      Reajuste médio: <span className="font-semibold text-emerald-600">{mediaLabel(chartData.reajusteMensal)}</span>
                     </span>
                   )}
                   <button onClick={() => setMostrarTabela(v => !v)} className="btn-secondary text-xs py-1">
@@ -381,7 +400,7 @@ export default function Dashboard() {
                           <td className="py-2 px-3 text-right text-blue-700 font-mono font-bold">—</td>
                           <td className="py-2 px-3 text-right text-purple-600 font-mono font-bold">{acumuladoLabel(chartData.inpcMensal)}</td>
                           <td className="py-2 px-3 text-right text-purple-700 font-mono font-bold">—</td>
-                          <td className="py-2 px-3 text-right text-emerald-700 font-mono font-bold">{acumuladoLabel(chartData.reajusteMensal)}</td>
+                          <td className="py-2 px-3 text-right text-emerald-700 font-mono font-bold">{mediaLabel(chartData.reajusteMensal)}</td>
                         </tr>
                       </tbody>
                     </table>
