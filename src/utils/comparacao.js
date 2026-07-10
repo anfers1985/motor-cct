@@ -196,7 +196,7 @@ function extrairNumericos(texto) {
 export const STATUS_CONFIG = {
   Superior:     { cls: 'bg-emerald-100 text-emerald-800 border-emerald-300', order: 0, icone: '▲', label: 'Superior',          relLabel: 'Base superior' },
   Inferior:     { cls: 'bg-red-100 text-red-700 border-red-300',             order: 1, icone: '▼', label: 'Inferior',          relLabel: 'Base inferior' },
-  Igual:        { cls: 'bg-slate-100 text-slate-600 border-slate-300',       order: 2, icone: '=', label: 'Igual',             relLabel: 'Igual à base' },
+  Igual:        { cls: 'bg-slate-100 text-slate-600 border-slate-300',       order: 2, icone: '=', label: 'Equivalente',       relLabel: 'Equivalente à base' },
   Modificada:   { cls: 'bg-blue-100 text-blue-800 border-blue-300',          order: 3, icone: '~', label: 'Redação Diferente',  relLabel: 'Redação diferente' },
   'Sem previsão': { cls: 'bg-amber-50 text-amber-700 border-amber-200',      order: 4, icone: '−', label: 'Sem Previsão',      relLabel: 'Sem previsão nesta fonte' },
   Exclusiva:    { cls: 'bg-purple-100 text-purple-800 border-purple-300',    order: 5, icone: '◆', label: 'Exclusiva',         relLabel: 'Exclusiva desta fonte' },
@@ -216,7 +216,7 @@ export function fraseVeredito(status, baseLabel, fonteLabel, temBaseClausula = t
   switch (status) {
     case 'Superior':   return `${baseLabel} é superior à ${fonteLabel}`
     case 'Inferior':   return `${baseLabel} é inferior à ${fonteLabel}`
-    case 'Igual':      return `${baseLabel} é igual à ${fonteLabel}`
+    case 'Igual':      return `${baseLabel} é equivalente à ${fonteLabel} no dado comparado`
     case 'Modificada': return `Redação diferente entre ${baseLabel} e ${fonteLabel}`
     case 'Ambigua':    return `${baseLabel} vs ${fonteLabel}: vários valores candidatos, requer confirmação`
     case 'Sem previsão': return `${fonteLabel} não possui previsão equivalente à cláusula da ${baseLabel}`
@@ -624,5 +624,39 @@ export function compararInstrumentosNeg(clausulasA, clausulasB) {
     if (!regUsedB.has(c.id))
       resultado.push({ clausulaA: null, clausulaB: c, score: 0, status: { label: 'NOVA', cls: 'bg-purple-100 text-purple-800', order: 3 } })
 
+  return resultado
+}
+
+// ─── Pareamento assistido por IA (pós-processamento opcional) ────────────────
+// O casamento por Jaccard (matchGrupoNeg) tem um teto estrutural: quando dois
+// instrumentos tratam da MESMA cláusula com vocabulário muito diferente (ex.:
+// "Banco de Horas" vs "Regime de Compensação Horária"), o score fica na faixa
+// de ruído — próximo ou abaixo de comparações genuinamente sem relação (ex.:
+// duas cláusulas que só coincidem por compartilhar o mesmo número ordinal).
+// Baixar o limiar de corte troca um falso-negativo por um falso-positivo em
+// outro par, então não é seguro resolver isso só com regex/Jaccard.
+//
+// Esta função aplica sugestões de pareamento vindas de uma IA (ver
+// services/ai/pareamento.js) sobre o resultado de compararInstrumentosNeg,
+// substituindo os pares SUPRIMIDA/NOVA indicados por uma linha comparada de
+// verdade — marcada com origemIA:true para que a interface deixe claro que
+// aquele pareamento foi sugerido por IA, não por correspondência textual.
+export function aplicarParesSugeridosIA(comparativo, sugestoes) {
+  if (!sugestoes?.length) return comparativo
+  const resultado = [...comparativo]
+  for (const { idA, idB } of sugestoes) {
+    const idxA = resultado.findIndex(r => r.clausulaA?.id === idA && !r.clausulaB && r.status.label === 'SUPRIMIDA')
+    const idxB = resultado.findIndex(r => r.clausulaB?.id === idB && !r.clausulaA && r.status.label === 'NOVA')
+    if (idxA === -1 || idxB === -1) continue // sugestão aponta para algo já usado ou inexistente — ignora com segurança
+    const a = resultado[idxA].clausulaA
+    const b = resultado[idxB].clausulaB
+    const score = similaridade(a.conteudo, b.conteudo)
+    const status = { ...classificarSimilaridade(score, a.conteudo, b.conteudo), label: 'ALTERADA' }
+    const merged = { clausulaA: a, clausulaB: b, score, status, origemIA: true }
+    // Remove as duas linhas soltas e insere a linha mesclada no lugar da primeira
+    const menor = Math.min(idxA, idxB), maior = Math.max(idxA, idxB)
+    resultado.splice(maior, 1)
+    resultado.splice(menor, 1, merged)
+  }
   return resultado
 }

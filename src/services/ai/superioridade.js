@@ -88,3 +88,86 @@ export async function refinarVereditosAmbiguos(itensAmbiguos, onProgress = null)
     : 'IA não conseguiu resolver os vereditos ambíguos com segurança.')
   return resultado
 }
+
+// ─── Auditoria de "Redação Diferente" ────────────────────────────────────────
+// avaliarSuperioridade cai em "Modificada" (Redação Diferente) quando NÃO há
+// nenhum valor numérico pra comparar (nem percentual, nem R$) — ou seja, o
+// algoritmo não tem NENHUM sinal pra saber se a diferença de redação é só
+// estilística ou esconde uma diferença substantiva de direitos/obrigações
+// (ex.: um lado exige "comunicação prévia por escrito" e o outro não; um lado
+// lista uma condição a mais para exercer um direito). Isso é justamente o
+// tipo de leitura que só faz sentido com compreensão de texto — não dá pra
+// resolver com regex. Esta auditoria roda a IA sobre cada par "Modificada" e
+// pede um veredito qualificado: ou confirma que é só forma (mantém
+// "Modificada", mas agora com uma leitura confirmada, não só um score de
+// similaridade), ou aponta Superior/Inferior/Igual quando encontra diferença
+// substantiva que o algoritmo não via.
+
+const MAX_CONTEUDO_AUDITORIA = 1500
+
+function montarPromptAuditoria(itens) {
+  const blocos = itens.map((it, i) => `
+### ITEM ${i} — ${it.titulo}
+
+TEXTO BASE:
+${(it.textoBase || '').slice(0, MAX_CONTEUDO_AUDITORIA)}
+
+TEXTO COMPARADO:
+${(it.textoComparado || '').slice(0, MAX_CONTEUDO_AUDITORIA)}`).join('\n')
+
+  return `Você é especialista em direito do trabalho brasileiro, auditando um comparativo automático
+entre cláusulas de dois instrumentos/textos (podem ser CCT, ACT, proposta sindical em negociação,
+ou registro de prática interna de empresa).
+
+Cada item abaixo foi marcado pelo algoritmo como "redação diferente" porque não encontrou NENHUM
+valor numérico (percentual ou R$) para comparar diretamente — a única coisa que o algoritmo sabe é
+que o texto é diferente, ele NÃO leu o conteúdo. Sua tarefa é ler os dois textos e verificar se essa
+classificação está certa ou se está mascarando algo mais importante:
+
+1) A diferença de redação é só estilística/formal (sinônimos, ordem das palavras, estrutura), sem
+   mudança real de direitos, obrigações, prazos ou condições? Se sim, responda status "Modificada"
+   mesmo assim — confirma que não há problema.
+2) Ou existe uma diferença SUBSTANTIVA que o algoritmo não conseguiu ver por não ter valor numérico
+   pra comparar (ex.: uma condição extra que só um lado exige, um direito que só um lado garante,
+   uma obrigação mais rigorosa de um lado)? Se sim, responda Superior (BASE mais favorável),
+   Inferior (BASE menos favorável) ou Igual (mesma substância, apesar de redação diferente),
+   explicando a diferença concreta encontrada.
+3) Se o texto não for suficiente pra decidir com segurança, responda "Indeterminado" — não force
+   uma conclusão.
+
+${blocos}
+
+SAÍDA OBRIGATÓRIA: retorne APENAS um array JSON válido, nenhum texto antes ou depois, sem
+markdown. Um item por ITEM acima, na mesma ordem, incluindo o índice:
+[{"item":0,"status":"Superior|Inferior|Igual|Modificada|Indeterminado","resumo":"1-2 frases: qual diferença concreta foi encontrada (ou confirmação de que é só forma)"}]`
+}
+
+// itensModificados: [{ id, titulo, textoBase, textoComparado }] — vem das
+// linhas com status.label === 'Modificada' (Redação Diferente).
+// Retorna: [{ id, status, resumo, origemIA:true }] — inclui também os itens
+// confirmados como "Modificada" (diferente de refinarVereditosAmbiguos, aqui
+// uma confirmação também é um resultado útil: "revisado por IA, é só forma").
+// 'Indeterminado' é descartado — a linha permanece como estava, sem selo de IA.
+export async function auditarRedacaoDiferente(itensModificados, onProgress = null) {
+  if (!itensModificados?.length) return []
+  const config = getAIConfig()
+  if (!config?.provedor || !config?.chave) {
+    throw new Error('Configure um provedor de IA nas Configurações para usar a auditoria assistida.')
+  }
+  onProgress?.(`Auditando ${itensModificados.length} cláusula(s) "Redação Diferente" com IA...`)
+  const prompt = montarPromptAuditoria(itensModificados)
+  const raw = await chamarProvedor(config, prompt)
+  const respostas = extrairJSON(raw) || []
+  const STATUS_VALIDOS = new Set(['Superior', 'Inferior', 'Igual', 'Modificada'])
+  const resultado = []
+  for (const r of respostas) {
+    const item = itensModificados[r?.item]
+    if (!item || !STATUS_VALIDOS.has(r.status)) continue
+    resultado.push({ id: item.id, status: r.status, resumo: (r.resumo || '').trim(), origemIA: true })
+  }
+  const divergentes = resultado.filter(r => r.status !== 'Modificada').length
+  onProgress?.(resultado.length > 0
+    ? `IA revisou ${resultado.length} de ${itensModificados.length} — ${divergentes} com diferença substantiva encontrada.`
+    : 'IA não conseguiu concluir a auditoria com segurança.')
+  return resultado
+}

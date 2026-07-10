@@ -4,7 +4,7 @@ import { useAuth } from '../hooks/useAuth'
 import { compararInstrumentosNeg, avaliarSuperioridade, aplicarParesSugeridosIA, STATUS_CONFIG, fraseVeredito } from '../utils/comparacao'
 import { getAIConfig } from '../services/ai/index'
 import { sugerirParesSemanticos } from '../services/ai/pareamento'
-import { refinarVereditosAmbiguos } from '../services/ai/superioridade'
+import { refinarVereditosAmbiguos, auditarRedacaoDiferente } from '../services/ai/superioridade'
 import { toNumeroOrdinal } from '../utils/ordenacao'
 import CheckList from '../components/UI/CheckList'
 import StepCard from '../components/UI/StepCard'
@@ -90,6 +90,8 @@ export default function Negociacao() {
   const [statusPareamentoIA, setStatusPareamentoIA] = useState('')
   const [refinandoIA, setRefinandoIA] = useState(false)
   const [statusRefinamentoIA, setStatusRefinamentoIA] = useState('')
+  const [auditandoIA, setAuditandoIA] = useState(false)
+  const [statusAuditoriaIA, setStatusAuditoriaIA] = useState('')
   const [overridesAmbiguidadeIA, setOverridesAmbiguidadeIA] = useState({}) // chave: `${idClausulaBase}|${fonteComparada}`
 
   // Controles da tabela
@@ -327,6 +329,46 @@ export default function Negociacao() {
     setRefinandoIA(false)
   }
 
+  // ─── Auditoria de "Redação Diferente" assistida por IA ──────────────────────
+  // "Modificada" (Redação Diferente) é o que sobra quando a cláusula não tem
+  // NENHUM valor numérico pra comparar — o algoritmo não leu o conteúdo, só
+  // mediu que o texto é diferente. Essa auditoria manda o texto completo pra
+  // IA verificar se a diferença é só de forma ou esconde uma diferença
+  // substantiva de direitos/obrigações que o algoritmo não tinha como ver.
+  async function auditarRedacaoDiferenteIA() {
+    if (!resultado) return
+    const config = getAIConfig()
+    if (!config?.provedor || !config?.chave) {
+      return setErro('Configure um provedor de IA nas Configurações para usar a auditoria assistida.')
+    }
+    setAuditandoIA(true); setErro(''); setStatusAuditoriaIA('')
+    try {
+      const itens = []
+      for (const linha of linhasResultado) {
+        if (!linha.clausulaBase) continue
+        for (const fc of resultado.comparadas) {
+          const av = linha.avaliacoes[fc]
+          if (av?.status === 'Modificada' && linha.pares[fc]?.clausulaB) {
+            itens.push({
+              id: `${linha.clausulaBase.id}|${fc}`,
+              titulo: linha.clausulaBase.titulo,
+              textoBase: linha.clausulaBase.conteudo,
+              textoComparado: linha.pares[fc].clausulaB.conteudo,
+            })
+          }
+        }
+      }
+      if (!itens.length) { setStatusAuditoriaIA('Nenhuma cláusula "Redação Diferente" encontrada.'); setAuditandoIA(false); return }
+      const resolucoes = await auditarRedacaoDiferente(itens, setStatusAuditoriaIA)
+      const novosOverrides = { ...overridesAmbiguidadeIA }
+      for (const r of resolucoes) novosOverrides[r.id] = r
+      setOverridesAmbiguidadeIA(novosOverrides)
+    } catch (e) {
+      setErro('Erro na auditoria por IA: ' + e.message)
+    }
+    setAuditandoIA(false)
+  }
+
 
   const linhasResultado = (() => {
     if (!resultado) return []
@@ -351,9 +393,10 @@ export default function Negociacao() {
           cb.conteudo, par?.clausulaB?.conteudo, cb.titulo,
           vigenciaPorFonte[baseEfetiva], vigenciaPorFonte[fc]
         )
-        const override = avaliacaoBase.status === 'Ambigua' ? overridesAmbiguidadeIA[`${cb.id}|${fc}`] : null
+        const elegivelAOverride = avaliacaoBase.status === 'Ambigua' || avaliacaoBase.status === 'Modificada'
+        const override = elegivelAOverride ? overridesAmbiguidadeIA[`${cb.id}|${fc}`] : null
         avaliacoes[fc] = override
-          ? { status: override.status, resumo: override.resumo, origemIA: true, ambiguidadeOriginal: avaliacaoBase }
+          ? { status: override.status, resumo: override.resumo, origemIA: true, veredictoOriginal: avaliacaoBase }
           : avaliacaoBase
       }
       // Status geral da linha: status mais "acionável" entre todas as comparadas.
@@ -666,16 +709,21 @@ export default function Negociacao() {
                 ))}
               </p>
             </div>
-            <div className="flex gap-2 items-center">
+            <div className="flex gap-2 items-center flex-wrap justify-end">
               {statusPareamentoIA && <span className="text-[10px] text-slate-400 max-w-[180px] truncate" title={statusPareamentoIA}>{statusPareamentoIA}</span>}
               <button onClick={pareamentoIA} disabled={pareandoIA} className="btn-secondary text-xs py-1"
-                title="Usa a IA configurada para tentar parear, entre as cláusulas que ficaram sem correspondência, aquelas que tratam do mesmo tema com redação muito diferente (ex.: 'Banco de Horas' vs 'Regime de Compensação Horária').">
+                title="Usa a IA configurada para tentar parear, entre as cláusulas que ficaram sem correspondência, aquelas que tratam do mesmo tema com redação muito diferente (ex.: 'Banco de Horas' vs 'Regime de Compensação Horária'). Cobre os casos 'Sem Previsão' e 'Exclusiva'.">
                 {pareandoIA ? '⏳ Pareando com IA...' : '🤖 Pareamento com IA'}
               </button>
               {statusRefinamentoIA && <span className="text-[10px] text-slate-400 max-w-[180px] truncate" title={statusRefinamentoIA}>{statusRefinamentoIA}</span>}
               <button onClick={refinarAmbiguidadesIA} disabled={refinandoIA} className="btn-secondary text-xs py-1"
                 title="Usa a IA configurada para tentar resolver vereditos marcados como 'Ambígua' — cláusulas com mais de um valor numérico candidato (ex.: valores por categoria/cargo diferentes) e sem estrutura confiável pra decidir sozinho qual se aplica.">
                 {refinandoIA ? '⏳ Refinando...' : '🤖 Refinar ambíguos'}
+              </button>
+              {statusAuditoriaIA && <span className="text-[10px] text-slate-400 max-w-[180px] truncate" title={statusAuditoriaIA}>{statusAuditoriaIA}</span>}
+              <button onClick={auditarRedacaoDiferenteIA} disabled={auditandoIA} className="btn-secondary text-xs py-1"
+                title="Usa a IA configurada para ler o texto completo das cláusulas marcadas 'Redação Diferente' (sem valor numérico pra comparar) e verificar se a diferença é só de forma ou esconde uma diferença substantiva de direitos/obrigações.">
+                {auditandoIA ? '⏳ Auditando...' : '🤖 Auditar redação diferente'}
               </button>
               <button onClick={exportarExcel} className="btn-secondary text-xs py-1">📊 {selecionados.size > 0 ? `Excel (${selecionados.size})` : 'Excel'}</button>
               <button onClick={exportarPDF}   className="btn-secondary text-xs py-1">📄 {selecionados.size > 0 ? `PDF (${selecionados.size})` : 'PDF'}</button>
@@ -852,12 +900,14 @@ export default function Negociacao() {
                                   <span title="Este pareamento foi sugerido pela IA (redação muito diferente para o casamento automático por similaridade) — revise antes de considerar definitivo." className="ml-1 font-normal normal-case text-[10px] px-1.5 py-0.5 rounded-full bg-indigo-100 text-indigo-700 border border-indigo-200">🤖 pareado por IA</span>
                                 )}
                               </p>
-                              <span title={av.origemIA ? `Resolvido por IA a partir de um veredito ambíguo — ${av.resumo}` : av.resumo} className={`text-xs px-2 py-0.5 rounded-full font-semibold border ${cfg2.cls || 'bg-slate-100 text-slate-500'}`}>
+                              <span title={av.origemIA ? `Revisado por IA — ${av.resumo}` : av.resumo} className={`text-xs px-2 py-0.5 rounded-full font-semibold border ${cfg2.cls || 'bg-slate-100 text-slate-500'}`}>
                                 {cfg2.icone} {cfg2.relLabel || av.status || '—'}{av.origemIA && ' 🤖'}
                               </span>
                             </div>
                             {av.origemIA && (
-                              <p className="text-[10px] text-indigo-600 -mt-1 mb-2">🤖 Veredito era "Ambígua" (múltiplos valores candidatos) e foi resolvido por IA — revise antes de considerar definitivo.</p>
+                              <p className="text-[10px] text-indigo-600 -mt-1 mb-2">
+                                🤖 Veredito original era "{STATUS_CONFIG[av.veredictoOriginal?.status]?.label || av.veredictoOriginal?.status}" e foi revisado por IA — revise antes de considerar definitivo.
+                              </p>
                             )}
                             {/* Conteúdo */}
                             {par?.clausulaB ? (
