@@ -23,16 +23,8 @@ const SINONIMOS_LAB = {
   // plano variável
   'ppr': 'variavel', 'plr': 'variavel', 'participacao': 'variavel', 'resultado': 'variavel',
   'gratificacao': 'variavel', 'bonus': 'variavel',
-  // jornada / banco de horas / compensação — documentos diferentes tratam o
-  // mesmo mecanismo (banco de horas) com vocabulário bem diferente: um lado
-  // fala em "banco de horas", o outro em "regime de compensação horária".
-  // Sem normalizar as duas famílias de termos para a mesma forma canônica,
-  // essas cláusulas nunca cruzam o limiar de pareamento e acabam marcadas
-  // (erradamente) como exclusivas de cada fonte.
+  // jornada / banco
   'banco': 'jornada', 'horas': 'jornada', 'jornada': 'jornada', 'horario': 'jornada',
-  'horaria': 'jornada', 'horarios': 'jornada', 'horarias': 'jornada',
-  'compensacao': 'jornada', 'compensar': 'jornada', 'compensado': 'jornada',
-  'compensada': 'jornada', 'compensatoria': 'jornada', 'compensatorio': 'jornada',
   // vigência
   'vigencia': 'vigencia', 'periodo': 'vigencia', 'abrangencia': 'abrangencia',
 }
@@ -102,7 +94,8 @@ function extrairCaput(texto) {
 }
 
 function extrairNumericos(texto) {
-  if (!texto) return { percentuais: [], percentuaisHeadline: [], monetarios: [], monetariosHeadline: [], todos: [] }
+  if (!texto) return { percentuais: [], percentuaisHeadline: [], monetarios: [], monetariosHeadline: [], todos: [], estruturado: false, ambiguoPercentual: false, ambiguoMonetario: false }
+  const estruturado = /PAR[AÁ]GRAFO\s/i.test(texto)
   const caput = extrairCaput(texto)
   const t = texto.replace(/\./g, '').replace(/,/g, '.')
   const tCaput = caput.replace(/\./g, '').replace(/,/g, '.')
@@ -123,7 +116,68 @@ function extrairNumericos(texto) {
     .map(m => parseFloat(m[1].replace(/\./g, '').replace(',', '.')))
     .filter(n => !isNaN(n) && n > 0)
 
-  return { percentuais, percentuaisHeadline, monetarios, monetariosHeadline, todos: [...percentuais, ...monetarios] }
+  // ── Progressão temporal vs. ambiguidade de categoria ───────────────────────
+  // "R$ 1.800 a partir de julho/2025 ... R$ 1.872 a partir de setembro/2025"
+  // tem 2 valores no caput, mas NÃO é ambiguidade — é reajuste escalonado no
+  // tempo, e o valor vigente é o mais recente (último do texto). Isso é bem
+  // diferente de "R$ X para vendedores e R$ Y para supervisores", que são
+  // categorias distintas de verdade. Distinguimos verificando se cada valor
+  // do caput está associado a uma âncora temporal ("a partir de", "a contar
+  // de", "desde") nas ~40 posições anteriores — se TODOS estiverem, é
+  // progressão: usamos o último valor em vez de marcar como ambígua.
+  const ANCORA_TEMPORAL = /(?:(?:a\s+partir\s+de|a\s+contar\s+de|desde)\s+[^.;]{0,100}?R\$\s*([\d.]+(?:,\d{2})?))|(?:R\$\s*([\d.]+(?:,\d{2})?)[^.;]{0,60}?(?:a\s+partir\s+de|a\s+contar\s+de|desde))/gi
+  // Progressão exige que o MAIOR valor distinto do caput esteja associado a uma
+  // âncora temporal (é o padrão real: "R$ antigo, reajustado para R$ novo a
+  // partir de [data]" — só o valor mais recente costuma repetir a data; o valor
+  // antigo aparece sozinho, sem "a partir de" do lado). Não exige âncora em TODOS
+  // os valores (isso era rígido demais e reclassificava reajustes normais como
+  // ambíguos) — só que o valor final/mais alto tenha uma âncora, reduzindo o
+  // risco de confundir com uma ambiguidade categórica real (geral vs. supervisor).
+  function ehProgressaoTemporal(caputOriginal, valoresDistintos) {
+    if (valoresDistintos.length < 2) return false
+    const ancoras = [...caputOriginal.matchAll(ANCORA_TEMPORAL)]
+    if (ancoras.length === 0) return false
+    const valoresAncorados = ancoras
+      .map(m => parseFloat((m[1] || m[2] || '').replace(/\./g, '').replace(',', '.')))
+      .filter(v => !isNaN(v))
+    const maiorValor = Math.max(...valoresDistintos)
+    return valoresAncorados.some(v => Math.abs(v - maiorValor) < 0.01)
+  }
+  const progressaoMonetaria = ehProgressaoTemporal(
+    caput,
+    [...new Set(monetariosHeadline.map(n => n.toFixed(2)))].map(Number)
+  )
+
+  // ── Ambiguidade ──────────────────────────────────────────────────────────
+  // Dois cenários em que "o maior valor" não é uma leitura confiável, mesmo
+  // depois do recorte por caput:
+  //
+  // 1) O PRÓPRIO caput já traz mais de um valor distinto (ex.: "R$ X para a
+  //    categoria A e R$ Y para a categoria B", tudo antes de qualquer
+  //    PARÁGRAFO). O recorte por caput não separa isso — só ajuda quando a
+  //    convenção é "caput geral + PARÁGRAFO = exceção/subcategoria".
+  //
+  // 2) Não existe NENHUM marcador estrutural de parágrafo no texto E o texto
+  //    inteiro tem mais de um valor. Isso cobre tanto instrumentos que usam
+  //    "Inciso I/II" ou "alínea a) b)" em vez de "PARÁGRAFO" (o regex não
+  //    reconhece esses marcadores), quanto — mais importante — textos que não
+  //    seguem NENHUM padrão de CCT/ACT/Mediador do MTE: propostas sindicais
+  //    e registros de prática interna da empresa, que chegam como texto
+  //    corrido livre. Para esses, não há sinal estrutural nenhum para confiar
+  //    — é justamente onde o Math.max() tem mais chance de misturar categorias.
+  const distintos = arr => new Set(arr.map(n => n.toFixed(2))).size
+  const ambiguoPercentual = distintos(percentuaisHeadline) > 1
+    || (!estruturado && distintos(percentuais) > 1)
+  const ambiguoMonetario = !progressaoMonetaria && (
+    distintos(monetariosHeadline) > 1
+    || (!estruturado && distintos(monetarios) > 1)
+  )
+
+  return {
+    percentuais, percentuaisHeadline, monetarios, monetariosHeadline,
+    todos: [...percentuais, ...monetarios], estruturado, ambiguoPercentual, ambiguoMonetario,
+    progressaoMonetaria,
+  }
 }
 
 // ─── Nova terminologia de status ─────────────────────────────────────────────
@@ -146,6 +200,11 @@ export const STATUS_CONFIG = {
   Modificada:   { cls: 'bg-blue-100 text-blue-800 border-blue-300',          order: 3, icone: '~', label: 'Redação Diferente',  relLabel: 'Redação diferente' },
   'Sem previsão': { cls: 'bg-amber-50 text-amber-700 border-amber-200',      order: 4, icone: '−', label: 'Sem Previsão',      relLabel: 'Sem previsão nesta fonte' },
   Exclusiva:    { cls: 'bg-purple-100 text-purple-800 border-purple-300',    order: 5, icone: '◆', label: 'Exclusiva',         relLabel: 'Exclusiva desta fonte' },
+  // Vários valores numéricos candidatos e nenhuma estrutura confiável (caput/
+  // PARÁGRAFO) pra saber qual é o principal — ver extrairNumericos(). Em vez
+  // de "chutar" com Math.max() e arriscar comparar categorias diferentes,
+  // fica marcado explicitamente para revisão manual ou refinamento por IA.
+  Ambigua:      { cls: 'bg-orange-100 text-orange-800 border-orange-300',   order: 6, icone: '?', label: 'Ambígua',           relLabel: 'Vários valores — requer revisão' },
 }
 
 // ─── Frase de veredito (headline) por status ─────────────────────────────────
@@ -159,6 +218,7 @@ export function fraseVeredito(status, baseLabel, fonteLabel, temBaseClausula = t
     case 'Inferior':   return `${baseLabel} é inferior à ${fonteLabel}`
     case 'Igual':      return `${baseLabel} é igual à ${fonteLabel}`
     case 'Modificada': return `Redação diferente entre ${baseLabel} e ${fonteLabel}`
+    case 'Ambigua':    return `${baseLabel} vs ${fonteLabel}: vários valores candidatos, requer confirmação`
     case 'Sem previsão': return `${fonteLabel} não possui previsão equivalente à cláusula da ${baseLabel}`
     default: return `${baseLabel} vs ${fonteLabel}: ${status}`
   }
@@ -299,6 +359,14 @@ export function avaliarSuperioridade(textoBase, textoComparado, tituloClausula =
   const monetDisponveis = numBase.monetarios.length > 0 && numComp.monetarios.length > 0
 
   if (temHeadlineAmbos && percBaseUsar.length > 0 && percCompUsar.length > 0 && (percDiferem || !monetDisponveis)) {
+    if (numBase.ambiguoPercentual || numComp.ambiguoPercentual) {
+      const listar = arr => [...new Set(arr.map(n => n.toFixed(2).replace('.', ',') + '%'))].join(', ')
+      return {
+        status: 'Ambigua',
+        resumo: `Mais de um percentual candidato encontrado (base: ${listar(percBaseUsar)}; comparada: ${listar(percCompUsar)}) e não há estrutura confiável (ex.: "PARÁGRAFO") para saber qual se aplica ao caso geral — pode ser categoria diferente, e não o mesmo dado. Requer confirmação manual ou refinamento por IA.${contextoVigencia}`,
+        candidatos: { tipo: 'percentual', base: percBaseUsar, comparado: percCompUsar },
+      }
+    }
     const maxBase = Math.max(...percBaseUsar)
     const maxComp = Math.max(...percCompUsar)
     const diff = maxComp - maxBase
@@ -336,8 +404,19 @@ export function avaliarSuperioridade(textoBase, textoComparado, tituloClausula =
   const monetCompUsar = temMonetHeadlineAmbos ? numComp.monetariosHeadline : numComp.monetarios
 
   if (monetBaseUsar.length > 0 && monetCompUsar.length > 0) {
-    const maxBase = Math.max(...monetBaseUsar)
-    const maxComp = Math.max(...monetCompUsar)
+    if (numBase.ambiguoMonetario || numComp.ambiguoMonetario) {
+      const fmt = v => 'R$ ' + v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+      const listar = arr => [...new Set(arr.map(n => fmt(n)))].join(', ')
+      return {
+        status: 'Ambigua',
+        resumo: `Mais de um valor candidato encontrado (base: ${listar(monetBaseUsar)}; comparada: ${listar(monetCompUsar)}) e não há estrutura confiável (ex.: "PARÁGRAFO") para saber qual se aplica ao caso geral — pode ser categoria/faixa diferente, e não o mesmo dado. Requer confirmação manual ou refinamento por IA.${contextoVigencia}`,
+        candidatos: { tipo: 'monetario', base: monetBaseUsar, comparado: monetCompUsar },
+      }
+    }
+    const valorRepresentativo = (arr, num) =>
+      (temMonetHeadlineAmbos && num.progressaoMonetaria) ? arr[arr.length - 1] : Math.max(...arr)
+    const maxBase = valorRepresentativo(monetBaseUsar, numBase)
+    const maxComp = valorRepresentativo(monetCompUsar, numComp)
     const diff = maxComp - maxBase
     const fmt = v => 'R$ ' + v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
     if (Math.abs(diff) < 0.01) {
@@ -545,39 +624,5 @@ export function compararInstrumentosNeg(clausulasA, clausulasB) {
     if (!regUsedB.has(c.id))
       resultado.push({ clausulaA: null, clausulaB: c, score: 0, status: { label: 'NOVA', cls: 'bg-purple-100 text-purple-800', order: 3 } })
 
-  return resultado
-}
-
-// ─── Pareamento assistido por IA (pós-processamento opcional) ────────────────
-// O casamento por Jaccard (matchGrupoNeg) tem um teto estrutural: quando dois
-// instrumentos tratam da MESMA cláusula com vocabulário muito diferente (ex.:
-// "Banco de Horas" vs "Regime de Compensação Horária"), o score fica na faixa
-// de ruído — próximo ou abaixo de comparações genuinamente sem relação (ex.:
-// duas cláusulas que só coincidem por compartilhar o mesmo número ordinal).
-// Baixar o limiar de corte troca um falso-negativo por um falso-positivo em
-// outro par, então não é seguro resolver isso só com regex/Jaccard.
-//
-// Esta função aplica sugestões de pareamento vindas de uma IA (ver
-// services/ai/pareamento.js) sobre o resultado de compararInstrumentosNeg,
-// substituindo os pares SUPRIMIDA/NOVA indicados por uma linha comparada de
-// verdade — marcada com origemIA:true para que a interface deixe claro que
-// aquele pareamento foi sugerido por IA, não por correspondência textual.
-export function aplicarParesSugeridosIA(comparativo, sugestoes) {
-  if (!sugestoes?.length) return comparativo
-  const resultado = [...comparativo]
-  for (const { idA, idB } of sugestoes) {
-    const idxA = resultado.findIndex(r => r.clausulaA?.id === idA && !r.clausulaB && r.status.label === 'SUPRIMIDA')
-    const idxB = resultado.findIndex(r => r.clausulaB?.id === idB && !r.clausulaA && r.status.label === 'NOVA')
-    if (idxA === -1 || idxB === -1) continue // sugestão aponta para algo já usado ou inexistente — ignora com segurança
-    const a = resultado[idxA].clausulaA
-    const b = resultado[idxB].clausulaB
-    const score = similaridade(a.conteudo, b.conteudo)
-    const status = { ...classificarSimilaridade(score, a.conteudo, b.conteudo), label: 'ALTERADA' }
-    const merged = { clausulaA: a, clausulaB: b, score, status, origemIA: true }
-    // Remove as duas linhas soltas e insere a linha mesclada no lugar da primeira
-    const menor = Math.min(idxA, idxB), maior = Math.max(idxA, idxB)
-    resultado.splice(maior, 1)
-    resultado.splice(menor, 1, merged)
-  }
   return resultado
 }

@@ -13,11 +13,11 @@
 // gastar tokens comparando o documento inteiro de novo).
 //
 // Reaproveita o mesmo provedor/chave/modelo configurados em
-// services/ai/index.js (getAIConfig), mas com um prompt próprio — as
-// funções de chamada aqui são independentes das usadas em extrairClausulas
-// para não haver risco de regressão na extração.
+// services/ai/index.js (getAIConfig) e o mesmo despachante de provedor de
+// services/ai/chamada.js — usado também por services/ai/superioridade.js.
 
 import { getAIConfig } from './index.js'
+import { chamarProvedor, extrairJSON } from './chamada.js'
 
 const MAX_CONTEUDO_PROMPT = 500 // caracteres de conteúdo por cláusula no prompt (suficiente para julgar o tema)
 
@@ -53,97 +53,13 @@ par for identificado):
 [{"idA":"<id exato da LISTA A>","idB":"<id exato da LISTA B>","motivo":"1 frase curta explicando por que é o mesmo instituto"}]`
 }
 
-function parseParesJSON(raw) {
-  let text = (raw || '').trim().replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim()
-  const inicio = text.indexOf('[')
-  const fim = text.lastIndexOf(']')
-  if (inicio === -1 || fim <= inicio) return []
-  try {
-    const arr = JSON.parse(text.slice(inicio, fim + 1))
-    return Array.isArray(arr) ? arr.filter(p => p && p.idA && p.idB) : []
-  } catch {
-    return []
-  }
-}
-
-async function chamarProvedor(config, prompt) {
-  switch (config.provedor) {
-    case 'gemini': {
-      const isThinking = config.modelo.includes('2.5') || config.modelo.includes('thinking')
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${config.modelo}:generateContent?key=${config.chave}`
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: {
-            temperature: 0.1,
-            maxOutputTokens: 4096,
-            ...(isThinking ? { thinkingConfig: { thinkingBudget: 0 } } : {}),
-          }
-        })
-      })
-      if (!res.ok) {
-        const e = await res.json().catch(() => ({}))
-        throw new Error(e?.error?.message || `Gemini erro ${res.status}`)
-      }
-      const data = await res.json()
-      return data.candidates?.[0]?.content?.parts?.map(p => p.text || '').join('') || ''
-    }
-    case 'claude': {
-      const res = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': config.chave,
-          'anthropic-version': '2023-06-01',
-          'anthropic-dangerous-direct-browser-access': 'true',
-        },
-        body: JSON.stringify({ model: config.modelo, max_tokens: 4096, messages: [{ role: 'user', content: prompt }] })
-      })
-      if (!res.ok) throw new Error(`Claude erro ${res.status}: ${await res.text()}`)
-      const data = await res.json()
-      return data.content?.[0]?.text || ''
-    }
-    case 'openai':
-    case 'groq':
-    case 'nvidia':
-    case 'mistral': {
-      const endpoints = {
-        openai: 'https://api.openai.com/v1/chat/completions',
-        groq: 'https://api.groq.com/openai/v1/chat/completions',
-        nvidia: 'https://integrate.api.nvidia.com/v1/chat/completions',
-        mistral: 'https://api.mistral.ai/v1/chat/completions',
-      }
-      const res = await fetch(endpoints[config.provedor], {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${config.chave}` },
-        body: JSON.stringify({ model: config.modelo, messages: [{ role: 'user', content: prompt }], temperature: 0.1, max_tokens: 4096 })
-      })
-      if (!res.ok) throw new Error(`${config.provedor} erro ${res.status}: ${await res.text()}`)
-      const data = await res.json()
-      return data.choices?.[0]?.message?.content || ''
-    }
-    case 'cohere': {
-      const res = await fetch('https://api.cohere.ai/v1/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${config.chave}` },
-        body: JSON.stringify({ model: config.modelo, message: prompt, temperature: 0.1 })
-      })
-      if (!res.ok) throw new Error(`Cohere erro ${res.status}: ${await res.text()}`)
-      const data = await res.json()
-      return data.text || ''
-    }
-    default:
-      throw new Error(`Provedor desconhecido: ${config.provedor}`)
-  }
-}
-
 // leftoverA / leftoverB: arrays de cláusulas { id, titulo, conteudo } que ficaram
 // sem par (SUPRIMIDA / NOVA) na comparação por Jaccard.
-// Retorna: [{ idA, idB, motivo }]  — nunca lança para cima de erro de rede/parse
-// isolado (é um refinamento opcional; se falhar, o resultado por Jaccard continua
-// valendo). onProgress é opcional, para mostrar status na UI.
+// Retorna: [{ idA, idB, motivo }]
+// NÃO engole erro: se a chamada de rede falhar (HTTP não-OK) ou a chave/provedor
+// não estiver configurado, a exceção sobe para quem chamou tratar (a tela
+// Negociação já captura isso em try/catch e mostra em setErro). Só o parse da
+// resposta em JSON é tolerante a falha (retorna [] se não conseguir extrair).
 export async function sugerirParesSemanticos(leftoverA, leftoverB, onProgress = null) {
   if (!leftoverA?.length || !leftoverB?.length) return []
   const config = getAIConfig()
@@ -153,7 +69,7 @@ export async function sugerirParesSemanticos(leftoverA, leftoverB, onProgress = 
   onProgress?.(`Analisando ${leftoverA.length} + ${leftoverB.length} cláusulas sem par com IA...`)
   const prompt = montarPrompt(leftoverA, leftoverB)
   const raw = await chamarProvedor(config, prompt)
-  const pares = parseParesJSON(raw)
+  const pares = (extrairJSON(raw) || []).filter(p => p && p.idA && p.idB)
   onProgress?.(pares.length > 0
     ? `IA sugeriu ${pares.length} pareamento(s) adicional(is).`
     : 'IA não encontrou pareamentos adicionais.')

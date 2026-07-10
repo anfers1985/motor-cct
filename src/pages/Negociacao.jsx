@@ -4,6 +4,7 @@ import { useAuth } from '../hooks/useAuth'
 import { compararInstrumentosNeg, avaliarSuperioridade, aplicarParesSugeridosIA, STATUS_CONFIG, fraseVeredito } from '../utils/comparacao'
 import { getAIConfig } from '../services/ai/index'
 import { sugerirParesSemanticos } from '../services/ai/pareamento'
+import { refinarVereditosAmbiguos } from '../services/ai/superioridade'
 import { toNumeroOrdinal } from '../utils/ordenacao'
 import CheckList from '../components/UI/CheckList'
 import StepCard from '../components/UI/StepCard'
@@ -87,6 +88,9 @@ export default function Negociacao() {
   const [erro, setErro] = useState('')
   const [pareandoIA, setPareandoIA] = useState(false)
   const [statusPareamentoIA, setStatusPareamentoIA] = useState('')
+  const [refinandoIA, setRefinandoIA] = useState(false)
+  const [statusRefinamentoIA, setStatusRefinamentoIA] = useState('')
+  const [overridesAmbiguidadeIA, setOverridesAmbiguidadeIA] = useState({}) // chave: `${idClausulaBase}|${fonteComparada}`
 
   // Controles da tabela
   const [fonteBase, setFonteBase] = useState('')
@@ -280,6 +284,49 @@ export default function Negociacao() {
     setPareandoIA(false)
   }
 
+  // ─── Refinamento de vereditos ambíguos assistido por IA ─────────────────────
+  // avaliarSuperioridade devolve status "Ambigua" quando há mais de um valor
+  // numérico candidato e nenhuma estrutura confiável (caput/PARÁGRAFO) pra
+  // saber qual é o principal — comum em cláusulas com categorias diferentes
+  // no mesmo parágrafo, e sobretudo em textos SEM o padrão CCT/ACT/Mediador
+  // do MTE (propostas sindicais em negociação, registro de prática interna),
+  // onde não há marcador estrutural nenhum pra confiar. Este passo roda só
+  // sobre essas linhas — nunca recalcula o que já saiu determinístico.
+  async function refinarAmbiguidadesIA() {
+    if (!resultado) return
+    const config = getAIConfig()
+    if (!config?.provedor || !config?.chave) {
+      return setErro('Configure um provedor de IA nas Configurações para usar o refinamento assistido.')
+    }
+    setRefinandoIA(true); setErro(''); setStatusRefinamentoIA('')
+    try {
+      const itens = []
+      for (const linha of linhasResultado) {
+        if (!linha.clausulaBase) continue
+        for (const fc of resultado.comparadas) {
+          const av = linha.avaliacoes[fc]
+          if (av?.status === 'Ambigua' && av.candidatos) {
+            itens.push({
+              id: `${linha.clausulaBase.id}|${fc}`,
+              titulo: linha.clausulaBase.titulo,
+              textoBase: linha.clausulaBase.conteudo,
+              textoComparado: linha.pares[fc]?.clausulaB?.conteudo,
+              candidatos: av.candidatos,
+            })
+          }
+        }
+      }
+      if (!itens.length) { setStatusRefinamentoIA('Nenhum veredito ambíguo encontrado.'); setRefinandoIA(false); return }
+      const resolucoes = await refinarVereditosAmbiguos(itens, setStatusRefinamentoIA)
+      const novosOverrides = { ...overridesAmbiguidadeIA }
+      for (const r of resolucoes) novosOverrides[r.id] = r
+      setOverridesAmbiguidadeIA(novosOverrides)
+    } catch (e) {
+      setErro('Erro no refinamento por IA: ' + e.message)
+    }
+    setRefinandoIA(false)
+  }
+
 
   const linhasResultado = (() => {
     if (!resultado) return []
@@ -300,10 +347,14 @@ export default function Negociacao() {
         const comp = comparativos[fc] || []
         const par = comp.find(r => r.clausulaA?.id === cb.id)
         pares[fc] = par || null
-        avaliacoes[fc] = avaliarSuperioridade(
+        const avaliacaoBase = avaliarSuperioridade(
           cb.conteudo, par?.clausulaB?.conteudo, cb.titulo,
           vigenciaPorFonte[baseEfetiva], vigenciaPorFonte[fc]
         )
+        const override = avaliacaoBase.status === 'Ambigua' ? overridesAmbiguidadeIA[`${cb.id}|${fc}`] : null
+        avaliacoes[fc] = override
+          ? { status: override.status, resumo: override.resumo, origemIA: true, ambiguidadeOriginal: avaliacaoBase }
+          : avaliacaoBase
       }
       // Status geral da linha: status mais "acionável" entre todas as comparadas.
       // IMPORTANTE: "Sem previsão" não é um veredito sobre a base — é apenas a
@@ -311,7 +362,7 @@ export default function Negociacao() {
       // na prioridade: só vira o status geral quando NENHUMA outra fonte trouxe
       // uma comparação de fato (ex.: se a CCT diverge na redação mas a Proposta
       // simplesmente não trata do tema, o status geral deve refletir a CCT).
-      const statusOrder = ['Inferior', 'Modificada', 'Superior', 'Igual', 'Sem previsão']
+      const statusOrder = ['Ambigua', 'Inferior', 'Modificada', 'Superior', 'Igual', 'Sem previsão']
       let statusGeral = 'Sem previsão'
       for (const fc of comparadas) {
         const s = avaliacoes[fc].status
@@ -616,10 +667,15 @@ export default function Negociacao() {
               </p>
             </div>
             <div className="flex gap-2 items-center">
-              {statusPareamentoIA && <span className="text-[10px] text-slate-400 max-w-[220px] truncate" title={statusPareamentoIA}>{statusPareamentoIA}</span>}
+              {statusPareamentoIA && <span className="text-[10px] text-slate-400 max-w-[180px] truncate" title={statusPareamentoIA}>{statusPareamentoIA}</span>}
               <button onClick={pareamentoIA} disabled={pareandoIA} className="btn-secondary text-xs py-1"
                 title="Usa a IA configurada para tentar parear, entre as cláusulas que ficaram sem correspondência, aquelas que tratam do mesmo tema com redação muito diferente (ex.: 'Banco de Horas' vs 'Regime de Compensação Horária').">
                 {pareandoIA ? '⏳ Pareando com IA...' : '🤖 Pareamento com IA'}
+              </button>
+              {statusRefinamentoIA && <span className="text-[10px] text-slate-400 max-w-[180px] truncate" title={statusRefinamentoIA}>{statusRefinamentoIA}</span>}
+              <button onClick={refinarAmbiguidadesIA} disabled={refinandoIA} className="btn-secondary text-xs py-1"
+                title="Usa a IA configurada para tentar resolver vereditos marcados como 'Ambígua' — cláusulas com mais de um valor numérico candidato (ex.: valores por categoria/cargo diferentes) e sem estrutura confiável pra decidir sozinho qual se aplica.">
+                {refinandoIA ? '⏳ Refinando...' : '🤖 Refinar ambíguos'}
               </button>
               <button onClick={exportarExcel} className="btn-secondary text-xs py-1">📊 {selecionados.size > 0 ? `Excel (${selecionados.size})` : 'Excel'}</button>
               <button onClick={exportarPDF}   className="btn-secondary text-xs py-1">📄 {selecionados.size > 0 ? `PDF (${selecionados.size})` : 'PDF'}</button>
@@ -730,9 +786,9 @@ export default function Negociacao() {
                           const av = r.avaliacoes?.[fc] || {}
                           const cfg2 = STATUS_CONFIG[av.status] || {}
                           return (
-                            <span key={fc} title={av.resumo}
+                            <span key={fc} title={av.origemIA ? `Resolvido por IA — ${av.resumo}` : av.resumo}
                               className={`text-xs px-1.5 py-0.5 rounded-full font-medium border ${cfg2.cls || 'bg-slate-100 text-slate-500'}`}>
-                              {FONTES_CONFIG[fc]?.icone} {cfg2.icone} {cfg2.relLabel || av.status || '—'}
+                              {FONTES_CONFIG[fc]?.icone} {cfg2.icone} {cfg2.relLabel || av.status || '—'}{av.origemIA && ' 🤖'}
                             </span>
                           )
                         })}
@@ -796,10 +852,13 @@ export default function Negociacao() {
                                   <span title="Este pareamento foi sugerido pela IA (redação muito diferente para o casamento automático por similaridade) — revise antes de considerar definitivo." className="ml-1 font-normal normal-case text-[10px] px-1.5 py-0.5 rounded-full bg-indigo-100 text-indigo-700 border border-indigo-200">🤖 pareado por IA</span>
                                 )}
                               </p>
-                              <span title={av.resumo} className={`text-xs px-2 py-0.5 rounded-full font-semibold border ${cfg2.cls || 'bg-slate-100 text-slate-500'}`}>
-                                {cfg2.icone} {cfg2.relLabel || av.status || '—'}
+                              <span title={av.origemIA ? `Resolvido por IA a partir de um veredito ambíguo — ${av.resumo}` : av.resumo} className={`text-xs px-2 py-0.5 rounded-full font-semibold border ${cfg2.cls || 'bg-slate-100 text-slate-500'}`}>
+                                {cfg2.icone} {cfg2.relLabel || av.status || '—'}{av.origemIA && ' 🤖'}
                               </span>
                             </div>
+                            {av.origemIA && (
+                              <p className="text-[10px] text-indigo-600 -mt-1 mb-2">🤖 Veredito era "Ambígua" (múltiplos valores candidatos) e foi resolvido por IA — revise antes de considerar definitivo.</p>
+                            )}
                             {/* Conteúdo */}
                             {par?.clausulaB ? (
                               <>
