@@ -21,9 +21,17 @@ import { chamarProvedor, extrairJSON } from './chamada.js'
 
 const MAX_CONTEUDO_PROMPT = 500 // caracteres de conteúdo por cláusula no prompt (suficiente para julgar o tema)
 
+// IMPORTANTE: nunca pedimos para a IA repetir o id real da cláusula (costuma ser
+// um UUID do banco). Modelos — sobretudo os mais rápidos/baratos — erram
+// reproduzir strings opacas longas com frequência: troca um caractere, corta um
+// pedaço. Se isso acontecesse, a comparação exata em aplicarParesSugeridosIA
+// falharia e a sugestão seria descartada em silêncio, sem erro nenhum. Por
+// isso usamos apelidos curtos e sequenciais (A0, A1, B0...) só para o prompt,
+// e traduzimos de volta para o id real no nosso próprio código — a IA nunca
+// precisa saber (nem reproduzir) o UUID de verdade.
 function montarPrompt(leftoverA, leftoverB) {
-  const fmt = (lista, rotulo) => lista.map(c =>
-    `[${rotulo}:${c.id}] ${c.titulo}\n${(c.conteudo || '').slice(0, MAX_CONTEUDO_PROMPT)}`
+  const fmt = (lista, prefixo) => lista.map((c, i) =>
+    `[${prefixo}${i}] ${c.titulo}\n${(c.conteudo || '').slice(0, MAX_CONTEUDO_PROMPT)}`
   ).join('\n\n')
 
   return `Você é especialista em direito do trabalho brasileiro (CCTs e ACTs).
@@ -48,9 +56,10 @@ LISTA B:
 ${fmt(leftoverB, 'B')}
 
 SAÍDA OBRIGATÓRIA: retorne APENAS um array JSON válido, nenhum texto antes ou depois, sem
-markdown, sem explicação. Um item por par identificado (pode ser um array vazio [] se nenhum
-par for identificado):
-[{"idA":"<id exato da LISTA A>","idB":"<id exato da LISTA B>","motivo":"1 frase curta explicando por que é o mesmo instituto"}]`
+markdown, sem explicação. Use EXATAMENTE os códigos entre colchetes acima (ex.: "A0", "B3") —
+não invente, não reproduza título nem texto. Um item por par identificado (pode ser um array
+vazio [] se nenhum par for identificado):
+[{"idA":"A0","idB":"B3","motivo":"1 frase curta explicando por que é o mesmo instituto"}]`
 }
 
 // leftoverA / leftoverB: arrays de cláusulas { id, titulo, conteudo } que ficaram
@@ -69,9 +78,29 @@ export async function sugerirParesSemanticos(leftoverA, leftoverB, onProgress = 
   onProgress?.(`Analisando ${leftoverA.length} + ${leftoverB.length} cláusulas sem par com IA...`)
   const prompt = montarPrompt(leftoverA, leftoverB)
   const raw = await chamarProvedor(config, prompt)
-  const pares = (extrairJSON(raw) || []).filter(p => p && p.idA && p.idB)
-  onProgress?.(pares.length > 0
-    ? `IA sugeriu ${pares.length} pareamento(s) adicional(is).`
-    : 'IA não encontrou pareamentos adicionais.')
+  const bruto = extrairJSON(raw) || []
+
+  // Traduz os apelidos "A0"/"B3" de volta para os ids reais das cláusulas.
+  // Se a IA devolver um apelido fora do padrão ou de índice inexistente
+  // (alucinação), o item é descartado silenciosamente aqui — não é erro de
+  // rede, é resposta malformada, e o comportamento seguro é ignorar.
+  const pares = []
+  for (const p of bruto) {
+    const mA = /^A(\d+)$/.exec(String(p?.idA || '').trim())
+    const mB = /^B(\d+)$/.exec(String(p?.idB || '').trim())
+    if (!mA || !mB) continue
+    const clausulaA = leftoverA[Number(mA[1])]
+    const clausulaB = leftoverB[Number(mB[1])]
+    if (!clausulaA || !clausulaB) continue
+    pares.push({ idA: clausulaA.id, idB: clausulaB.id, motivo: p.motivo })
+  }
+
+  if (pares.length > 0) {
+    const porId = new Map([...leftoverA, ...leftoverB].map(c => [c.id, c.titulo]))
+    const lista = pares.map(p => `"${porId.get(p.idA) || p.idA}" ↔ "${porId.get(p.idB) || p.idB}"`).join('; ')
+    onProgress?.(`IA parou ${pares.length}: ${lista}`)
+  } else {
+    onProgress?.('IA não encontrou pareamentos adicionais.')
+  }
   return pares
 }
