@@ -10,6 +10,8 @@ import CheckList from '../components/UI/CheckList'
 import StepCard from '../components/UI/StepCard'
 import * as XLSX from 'xlsx'
 import { gerarPDFNegociacao } from '../services/reports/pdfReport'
+import { gerarAnaliseNegocial } from '../services/ai/analiseNegocial'
+import { gerarExcelAnaliseNegocial } from '../services/reports/relatorioNegocialExcel'
 
 // ─── Fontes disponíveis ────────────────────────────────────────────────────────
 const FONTES_CONFIG = {
@@ -92,6 +94,8 @@ export default function Negociacao() {
   const [statusRefinamentoIA, setStatusRefinamentoIA] = useState('')
   const [auditandoIA, setAuditandoIA] = useState(false)
   const [statusAuditoriaIA, setStatusAuditoriaIA] = useState('')
+  const [gerandoAnaliseIA, setGerandoAnaliseIA] = useState(false)
+  const [statusAnaliseIA, setStatusAnaliseIA] = useState('')
   const [overridesAmbiguidadeIA, setOverridesAmbiguidadeIA] = useState({}) // chave: `${idClausulaBase}|${fonteComparada}`
 
   // Controles da tabela
@@ -592,6 +596,50 @@ export default function Negociacao() {
     gerarPDFNegociacao({ itens, baseLabel: fBase, comparadas, FONTES_CONFIG, STATUS_CONFIG, fraseVeredito })
   }
 
+  // ─── Análise Negocial assistida por IA (Mapa de Pontos de Negociação) ──────
+  // Reaproveita o pareamento já calculado em linhasResultado — só pede à IA os
+  // campos analíticos/narrativos (tipo de alteração, responsável, direção,
+  // relevância, orientação de mesa). Nunca re-pareia cláusulas.
+  async function gerarRelatorioNegocialIA() {
+    if (!resultado) return
+    const config = getAIConfig()
+    if (!config?.provedor || !config?.chave) {
+      return setErro('Configure um provedor de IA nas Configurações para gerar a análise negocial.')
+    }
+    const { comparadas, baseEfetiva } = resultado
+    const fontesInfo = [
+      { chave: baseEfetiva, label: FONTES_CONFIG[baseEfetiva]?.label || baseEfetiva },
+      ...comparadas.map(fc => ({ chave: fc, label: FONTES_CONFIG[fc]?.label || fc })),
+    ]
+    const itens = selecionados.size > 0 ? filtradoOrdenado.filter((_, i) => selecionados.has(i)) : filtradoOrdenado
+    if (!itens.length) return setErro('Nenhuma cláusula para analisar com os filtros/seleção atuais.')
+
+    const pontos = itens.map((r, i) => {
+      const porFonte = { [baseEfetiva]: r.clausulaBase || null }
+      for (const fc of comparadas) {
+        porFonte[fc] = r.pares?.[fc]?.clausulaB || (fc === r.fontaExclusiva ? r.clausulaNova : null)
+      }
+      return {
+        id: r.clausulaBase?.id || r.clausulaNova?.id || `linha-${r.idx ?? i}`,
+        tituloReferencia: r.clausulaBase?.titulo || r.clausulaNova?.titulo || 'Sem título',
+        porFonte,
+      }
+    })
+
+    setGerandoAnaliseIA(true); setErro(''); setStatusAnaliseIA('')
+    try {
+      const classificacoes = await gerarAnaliseNegocial(pontos, fontesInfo, setStatusAnaliseIA)
+      gerarExcelAnaliseNegocial(pontos, classificacoes, fontesInfo, {
+        titulo: 'MAPA DE PONTOS DE NEGOCIAÇÃO — ' + fontesInfo.map(f => f.label).join(' × '),
+        subtitulo: `Gerado em ${new Date().toLocaleDateString('pt-BR')} — Motor CCT`,
+      })
+      setStatusAnaliseIA(`✅ Relatório gerado — ${classificacoes.size} de ${pontos.length} ponto(s) analisados.`)
+    } catch (e) {
+      setErro('Erro ao gerar análise negocial: ' + e.message)
+    }
+    setGerandoAnaliseIA(false)
+  }
+
   // ─── Render ───────────────────────────────────────────────────────────────────
   return (
     <div className="pb-24">
@@ -727,6 +775,11 @@ export default function Negociacao() {
               </button>
               <button onClick={exportarExcel} className="btn-secondary text-xs py-1">📊 {selecionados.size > 0 ? `Excel (${selecionados.size})` : 'Excel'}</button>
               <button onClick={exportarPDF}   className="btn-secondary text-xs py-1">📄 {selecionados.size > 0 ? `PDF (${selecionados.size})` : 'PDF'}</button>
+              {statusAnaliseIA && <span className="text-[10px] text-slate-400 max-w-[220px] truncate" title={statusAnaliseIA}>{statusAnaliseIA}</span>}
+              <button onClick={gerarRelatorioNegocialIA} disabled={gerandoAnaliseIA} className="btn-secondary text-xs py-1"
+                title="Gera um Mapa de Pontos de Negociação (Excel, 3 abas: Análise Negocial, Alterações Meramente Textuais, Resumo Executivo) — a IA lê o conteúdo de cada cláusula pareada e classifica tipo de alteração, responsável, direção do efeito, relevância e orientação de mesa.">
+                {gerandoAnaliseIA ? '⏳ Gerando análise...' : `🧠 Análise Negocial (IA)${selecionados.size > 0 ? ` (${selecionados.size})` : ''}`}
+              </button>
             </div>
           </div>
 
@@ -964,6 +1017,9 @@ export default function Negociacao() {
           <span className="text-sm font-semibold">{selecionados.size} cláusula(s)</span>
           <button onClick={exportarExcel} className="text-xs bg-white/15 hover:bg-white/25 px-3 py-1.5 rounded-lg">📊 Excel</button>
           <button onClick={exportarPDF}   className="text-xs bg-white/15 hover:bg-white/25 px-3 py-1.5 rounded-lg">📄 PDF</button>
+          <button onClick={gerarRelatorioNegocialIA} disabled={gerandoAnaliseIA} className="text-xs bg-white/15 hover:bg-white/25 px-3 py-1.5 rounded-lg">
+            {gerandoAnaliseIA ? '⏳ Gerando...' : '🧠 Análise Negocial (IA)'}
+          </button>
           <button onClick={() => setSelecionados(new Set())} className="text-xs opacity-60 hover:opacity-100 ml-1">✕</button>
         </div>
       )}

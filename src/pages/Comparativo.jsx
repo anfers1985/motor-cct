@@ -7,6 +7,9 @@ import CheckList from '../components/UI/CheckList'
 import StepCard from '../components/UI/StepCard'
 import { gerarExcelComparativo } from '../services/reports/excelReport'
 import { gerarPDFComparativo } from '../services/reports/pdfReport'
+import { gerarAnaliseNegocial } from '../services/ai/analiseNegocial'
+import { gerarExcelAnaliseNegocial } from '../services/reports/relatorioNegocialExcel'
+import { getAIConfig } from '../services/ai/index'
 
 function diffTexto(textoA, textoB) {
   if (!textoA && !textoB) return { html_a: '', html_b: '' }
@@ -72,6 +75,9 @@ export default function Comparativo() {
   const [expandidos,setExpandidos]=useState(new Set())
   const [modoExpandido,setModoExpandido]=useState(false)
   const [selecionados,setSelecionados]=useState(new Set())
+  const [gerandoAnaliseIA,setGerandoAnaliseIA]=useState(false)
+  const [statusAnaliseIA,setStatusAnaliseIA]=useState('')
+  const [erroAnaliseIA,setErroAnaliseIA]=useState('')
 
   useEffect(()=>{
     if(!user) return
@@ -241,6 +247,43 @@ export default function Comparativo() {
     else gerarPDFComparativo(itens,iA,iB)
   }
 
+  // ─── Análise Negocial assistida por IA (Mapa de Pontos de Negociação) ──────
+  // Reaproveita o pareamento já calculado em `filtrado`/`resultado` — só pede
+  // à IA os campos analíticos/narrativos. Nunca re-pareia cláusulas.
+  async function gerarRelatorioNegocialIA(){
+    if(!resultado) return
+    const config=getAIConfig()
+    if(!config?.provedor||!config?.chave){
+      setErroAnaliseIA('Configure um provedor de IA nas Configurações para gerar a análise negocial.')
+      return
+    }
+    const fontesInfo=[
+      {chave:'A',label:iA?.nome||'Instrumento A'},
+      {chave:'B',label:iB?.nome||'Instrumento B'},
+    ]
+    const itens=selecionados.size>0?filtrado.filter((_,i)=>selecionados.has(i)):filtrado
+    if(!itens.length){ setErroAnaliseIA('Nenhuma cláusula para analisar com os filtros/seleção atuais.'); return }
+
+    const pontos=itens.map((r,i)=>({
+      id: r.clausulaA?.id || r.clausulaB?.id || `linha-${i}`,
+      tituloReferencia: r.clausulaA?.titulo || r.clausulaB?.titulo || 'Sem título',
+      porFonte:{ A:r.clausulaA||null, B:r.clausulaB||null },
+    }))
+
+    setGerandoAnaliseIA(true); setErroAnaliseIA(''); setStatusAnaliseIA('')
+    try{
+      const classificacoes=await gerarAnaliseNegocial(pontos,fontesInfo,setStatusAnaliseIA)
+      gerarExcelAnaliseNegocial(pontos,classificacoes,fontesInfo,{
+        titulo:'MAPA DE PONTOS DE NEGOCIAÇÃO — '+fontesInfo.map(f=>f.label).join(' × '),
+        subtitulo:`Gerado em ${new Date().toLocaleDateString('pt-BR')} — Motor CCT`,
+      })
+      setStatusAnaliseIA(`✅ Relatório gerado — ${classificacoes.size} de ${pontos.length} ponto(s) analisados.`)
+    }catch(e){
+      setErroAnaliseIA('Erro ao gerar análise negocial: '+e.message)
+    }
+    setGerandoAnaliseIA(false)
+  }
+
   return (
     <div className="pb-24">
       <style>{`
@@ -386,7 +429,13 @@ export default function Comparativo() {
             <button className="btn-secondary text-xs" onClick={()=>exportar('pdf')}>
               📄 {selecionados.size>0?`PDF (${selecionados.size})`:'PDF'}
             </button>
+            {statusAnaliseIA&&<span className="text-[10px] text-slate-400 max-w-[220px] truncate" title={statusAnaliseIA}>{statusAnaliseIA}</span>}
+            <button className="btn-secondary text-xs" onClick={gerarRelatorioNegocialIA} disabled={gerandoAnaliseIA}
+              title="Gera um Mapa de Pontos de Negociação (Excel, 3 abas: Análise Negocial, Alterações Meramente Textuais, Resumo Executivo) — a IA lê o conteúdo de cada cláusula pareada e classifica tipo de alteração, responsável, direção do efeito, relevância e orientação de mesa.">
+              {gerandoAnaliseIA?'⏳ Gerando análise...':`🧠 Análise Negocial (IA)${selecionados.size>0?` (${selecionados.size})`:''}`}
+            </button>
           </div>
+          {erroAnaliseIA&&<p className="text-xs text-red-600 mb-2">{erroAnaliseIA}</p>}
 
           <div className="flex items-center gap-2 mb-2 px-3 py-1.5 bg-slate-50 rounded-lg text-xs text-slate-500">
             <input type="checkbox" checked={todosSelecionados} onChange={toggleSelecionarTodos} className="w-4 h-4 cursor-pointer"/>
@@ -456,6 +505,9 @@ export default function Comparativo() {
           <span className="text-sm font-semibold">{selecionados.size} cláusula(s) selecionada(s)</span>
           <button onClick={()=>exportar('excel')} className="text-xs bg-white/15 hover:bg-white/25 px-3 py-1.5 rounded-lg transition-colors">📊 Excel</button>
           <button onClick={()=>exportar('pdf')}   className="text-xs bg-white/15 hover:bg-white/25 px-3 py-1.5 rounded-lg transition-colors">📄 PDF</button>
+          <button onClick={gerarRelatorioNegocialIA} disabled={gerandoAnaliseIA} className="text-xs bg-white/15 hover:bg-white/25 px-3 py-1.5 rounded-lg transition-colors">
+            {gerandoAnaliseIA?'⏳ Gerando...':'🧠 Análise Negocial (IA)'}
+          </button>
           <button onClick={()=>setSelecionados(new Set())} className="text-xs opacity-60 hover:opacity-100 ml-1">✕ Limpar</button>
         </div>
       )}
