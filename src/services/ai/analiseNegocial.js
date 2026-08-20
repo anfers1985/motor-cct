@@ -49,6 +49,20 @@ function truncar(texto, max) {
 function montarPrompt(pontos, fontesInfo) {
   const listaFontes = fontesInfo.map(f => `"${f.label}"`).join(', ')
 
+  // Sinal de cobertura por fonte: uma fonte que só tem conteúdo numa fatia
+  // pequena dos pontos é, com grande probabilidade, um documento PARCIAL
+  // (pauta/rol de reivindicações, memorando, lista de pedidos) — não um
+  // instrumento coletivo completo. Isso muda a leitura correta de "ausência":
+  // não é supressão de direito, é só um tema que aquele documento não versa.
+  const avisosCobertura = fontesInfo.map(f => {
+    const comConteudo = pontos.filter(p => p.porFonte[f.chave]).length
+    const pct = pontos.length ? comConteudo / pontos.length : 1
+    if (pct < 0.4) {
+      return `- "${f.label}": possui conteúdo em apenas ${comConteudo} de ${pontos.length} pontos (${Math.round(pct * 100)}%). Isso indica FORTEMENTE que "${f.label}" é um documento PARCIAL (pauta/rol de reivindicações, memorando ou lista de pedidos pontuais), NÃO um instrumento coletivo completo. Para esta fonte, a ausência de um tema NUNCA deve ser classificada como "SUPRESSÃO" — use "TEMA NÃO ABORDADO NA PAUTA", salvo se o próprio texto desta fonte disser explicitamente que remove/revoga aquele direito.`
+    }
+    return null
+  }).filter(Boolean).join('\n')
+
   const blocos = pontos.map((p, i) => {
     const partesFonte = fontesInfo.map(f => {
       const c = p.porFonte[f.chave]
@@ -65,6 +79,14 @@ minuta/proposta sindical, proposta da empresa ou prática interna. Seu trabalho 
 prepara um "Mapa de Pontos de Negociação" para a mesa de negociação: para cada PONTO abaixo, leia
 o conteúdo de cada fonte e produza uma análise objetiva e tecnicamente precisa.
 
+REGRA CRÍTICA — NUNCA ALUCINE RELAÇÃO CAUSAL: só descreva uma fonte como "substituindo",
+"trocando" ou "compensando" um direito por outro se ISSO ESTIVER EXPLÍCITO no texto de alguma das
+fontes. Se o pareamento automático agrupou dois itens que não têm relação temática clara entre si
+(ex.: um item de pauta truncado/ambíguo por OCR, sem menção ao mesmo instituto jurídico das
+demais fontes), NÃO invente uma narrativa de causa-efeito — diga isso explicitamente em
+"alteracao_substancial" (ex.: "Não há relação clara entre os itens pareados nesta linha; revisão
+humana recomendada.") e marque "relevancia" como "BAIXA" nesse caso de incerteza.
+${avisosCobertura ? `\nCOBERTURA DAS FONTES NESTA ANÁLISE:\n${avisosCobertura}\n` : ''}
 Para CADA ponto, decida:
 
 1) "textual": true se a ÚNICA diferença entre as fontes é redação/nomenclatura/organização do
@@ -78,7 +100,8 @@ Para CADA ponto, decida:
 3) "alteracao_substancial": 1-3 frases objetivas descrevendo CONCRETAMENTE o que muda entre as
    fontes (valores, percentuais, prazos, condições) — no estilo "Bora Brasil suprime o direito
    garantido de X, substituindo por Y". Se não houver diferença real entre nenhuma fonte, diga
-   "Sem divergência entre as fontes.".
+   "Sem divergência entre as fontes.". Se o tema simplesmente não é abordado por uma fonte parcial
+   (ver aviso de cobertura acima), diga isso nesses termos — não descreva como perda de direito.
 
 4) "relacao_alteracao": indique resumidamente o sentido da mudança usando os nomes reais das
    fontes, ex.: "CCT → Proposta Sindical" ou "CCT → Proposta Sindical + CCT → Bora Brasil" (uma
@@ -88,12 +111,19 @@ Para CADA ponto, decida:
 
 5) "responsavel": qual fonte(s) propuseram a alteração em relação às demais — use o nome exato de
    uma das fontes (${listaFontes}), ou "AMBOS" se mais de uma fonte convergiu na mesma mudança em
-   relação a uma referência comum, ou "N/A" se não houver alteração real.
+   relação a uma referência comum, ou "N/A" se não houver alteração real ou se for apenas "tema
+   não abordado" por uma fonte parcial.
 
 6) "tipo_alteracao": classifique em UMA das categorias (escolha a mais adequada, maiúsculas):
    ALTERAÇÃO DE VALOR | ALTERAÇÃO DE PERCENTUAL | ALTERAÇÃO DE PRAZO | ALTERAÇÃO DE CRITÉRIO |
    ALTERAÇÃO DE CONDIÇÃO | ALTERAÇÃO DE PERIODICIDADE | SUPRESSÃO | REDUÇÃO DE OBRIGAÇÃO |
-   AMPLIAÇÃO DE DIREITO | CRIAÇÃO DE OBRIGAÇÃO | INOVAÇÃO | SEM ALTERAÇÃO
+   AMPLIAÇÃO DE DIREITO | CRIAÇÃO DE OBRIGAÇÃO | INOVAÇÃO | TEMA NÃO ABORDADO NA PAUTA |
+   SEM ALTERAÇÃO
+   Use "SUPRESSÃO" APENAS quando (a) o texto de alguma fonte remove/revoga explicitamente um
+   direito antes existente, OU (b) a fonte que omite o tema é comprovadamente um instrumento
+   coletivo completo (regula o mesmo capítulo/matéria extensamente) que conspicuamente pula
+   aquela cláusula específica. Se a fonte que omite for parcial (ver aviso de cobertura), use
+   "TEMA NÃO ABORDADO NA PAUTA" em vez de "SUPRESSÃO".
 
 7) "impacto": 1 frase indicando a natureza do impacto — comece com uma ou mais destas etiquetas
    separadas por " / ": FINANCEIRO, JURÍDICO-TRABALHISTA, OPERACIONAL, SINDICAL — seguida de uma
@@ -103,13 +133,18 @@ Para CADA ponto, decida:
    final (não por quem propôs): "FAVORAVEL_EMPREGADOS" (mais favorável aos empregados/sindicato),
    "FAVORAVEL_EMPRESA" (mais favorável à empresa), "MISTA" (ganhos e perdas para ambos os lados, ou
    convergência que troca uma proteção por outra), "NEUTRA" (sem favorecimento claro a nenhum
-   lado).
+   lado — inclui, em regra, "TEMA NÃO ABORDADO NA PAUTA", pois o direito continua vigendo pelo
+   instrumento/lei já em vigor até que se decida o contrário).
 
 9) "relevancia": "ALTA", "MEDIA" ou "BAIXA" — considere magnitude financeira, risco jurídico e
    quantos empregados afeta. Pontos sem alteração real ("SEM ALTERAÇÃO") são sempre "BAIXA".
+   Pontos "TEMA NÃO ABORDADO NA PAUTA" são em regra "BAIXA" (o direito segue vigente por padrão),
+   suba para "MEDIA" apenas se houver risco concreto de a lacuna gerar disputa na negociação.
 
 10) "ponto_negociacao": 1-2 frases de orientação prática para a mesa de negociação — o que
-    negociar, ou, se já convergido entre as fontes, o que confirmar/atentar.
+    negociar, ou, se já convergido entre as fontes, o que confirmar/atentar. Para "TEMA NÃO
+    ABORDADO NA PAUTA", oriente a confirmar que o direito permanece vigente pelo instrumento
+    atual/lei, não a "negociar a reinserção" de algo que nunca foi removido.
 
 ${blocos}
 
