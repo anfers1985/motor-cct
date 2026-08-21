@@ -90,12 +90,8 @@ export default function Negociacao() {
   const [resultado, setResultado] = useState(null)
   const [loading, setLoading] = useState(false)
   const [erro, setErro] = useState('')
-  const [pareandoIA, setPareandoIA] = useState(false)
-  const [statusPareamentoIA, setStatusPareamentoIA] = useState('')
-  const [refinandoIA, setRefinandoIA] = useState(false)
-  const [statusRefinamentoIA, setStatusRefinamentoIA] = useState('')
-  const [auditandoIA, setAuditandoIA] = useState(false)
-  const [statusAuditoriaIA, setStatusAuditoriaIA] = useState('')
+  const [verificandoIA, setVerificandoIA] = useState(false)
+  const [statusVerificacaoIA, setStatusVerificacaoIA] = useState('')
   const [gerandoAnaliseIA, setGerandoAnaliseIA] = useState(false)
   const [statusAnaliseIA, setStatusAnaliseIA] = useState('')
   const [gerandoParecerIA, setGerandoParecerIA] = useState(false)
@@ -264,59 +260,75 @@ export default function Negociacao() {
     setLoading(false)
   }
 
-  // ─── Pareamento assistido por IA (refinamento opcional pós-comparação) ─────
-  // O casamento por Jaccard tem um teto estrutural para cláusulas que tratam do
-  // mesmo tema com vocabulário muito diferente (ver comentário em
-  // utils/comparacao.js::aplicarParesSugeridosIA). Esta função roda um segundo
-  // passo, best-effort, chamando a IA já configurada só sobre as cláusulas que
-  // sobraram sem par — nunca sobre o documento inteiro de novo.
-  async function pareamentoIA() {
+  // ─── Verificação Completa com IA (botão único) ─────────────────────────────
+  // Encadeia os 3 passos que antes eram botões separados — pareamento dos
+  // "sem par" (Sem Previsão/Exclusiva), refinamento dos "Ambígua" e auditoria
+  // dos "Redação Diferente" — numa única chamada. Cada passo só atua sobre o
+  // que sobrou determinístico/sem solução automática; nunca reprocessa o que
+  // já saiu resolvido. IMPORTANTE: como os passos dependem uns dos outros
+  // (pareamento pode criar novos pares que entram no refinamento/auditoria
+  // seguintes) e o estado do React não atualiza de forma síncrona, cada passo
+  // recalcula as linhas localmente a partir do resultado ainda não commitado
+  // no state — só fazemos `setResultado`/`setOverridesAmbiguidadeIA` UMA vez
+  // no final, com o resultado consolidado de todos os passos.
+  function computarLinhasParaVerificacao(res) {
+    const { clausulasPorFonte, comparativos, baseEfetiva, comparadas } = res
+    const clausulasBase = clausulasPorFonte[baseEfetiva] || []
+    const vigenciaPorFonte = {}
+    for (const f of res.fontesLista) {
+      const inst = todosInstrumentos.find(i => i.id === instSelecionado[f])
+      vigenciaPorFonte[f] = inst ? { inicio: inst.vigencia_inicio, fim: inst.vigencia_fim } : null
+    }
+    return clausulasBase.map(cb => {
+      const pares = {}; const avaliacoes = {}
+      for (const fc of comparadas) {
+        const comp = comparativos[fc] || []
+        const par = comp.find(r => r.clausulaA?.id === cb.id)
+        pares[fc] = par || null
+        avaliacoes[fc] = avaliarSuperioridade(
+          cb.conteudo, par?.clausulaB?.conteudo, cb.titulo,
+          vigenciaPorFonte[baseEfetiva], vigenciaPorFonte[fc]
+        )
+      }
+      return { clausulaBase: cb, pares, avaliacoes }
+    })
+  }
+
+  async function verificacaoCompletaIA() {
     if (!resultado) return
     const config = getAIConfig()
     if (!config?.provedor || !config?.chave) {
-      return setErro('Configure um provedor de IA nas Configurações para usar o pareamento assistido.')
+      return setErro('Configure um provedor de IA nas Configurações para usar a verificação assistida.')
     }
-    setPareandoIA(true); setErro(''); setStatusPareamentoIA('')
+    setVerificandoIA(true); setErro(''); setStatusVerificacaoIA('')
     try {
-      const novosComparativos = { ...resultado.comparativos }
-      for (const fc of resultado.comparadas) {
+      // Passo 1 — pareamento dos que ficaram sem correspondência
+      setStatusVerificacaoIA('Etapa 1/3 — pareando cláusulas sem correspondência...')
+      let resultadoAtual = resultado
+      const novosComparativos = { ...resultadoAtual.comparativos }
+      for (const fc of resultadoAtual.comparadas) {
         const comp = novosComparativos[fc] || []
         const leftoverA = comp.filter(r => r.status.label === 'SUPRIMIDA').map(r => r.clausulaA)
         const leftoverB = comp.filter(r => r.status.label === 'NOVA').map(r => r.clausulaB)
         if (!leftoverA.length || !leftoverB.length) continue
-        const sugestoes = await sugerirParesSemanticos(leftoverA, leftoverB, setStatusPareamentoIA)
+        const sugestoes = await sugerirParesSemanticos(leftoverA, leftoverB, setStatusVerificacaoIA)
         novosComparativos[fc] = aplicarParesSugeridosIA(comp, sugestoes)
       }
-      setResultado({ ...resultado, comparativos: novosComparativos })
-    } catch (e) {
-      setErro('Erro no pareamento por IA: ' + e.message)
-    }
-    setPareandoIA(false)
-  }
+      resultadoAtual = { ...resultadoAtual, comparativos: novosComparativos }
 
-  // ─── Refinamento de vereditos ambíguos assistido por IA ─────────────────────
-  // avaliarSuperioridade devolve status "Ambigua" quando há mais de um valor
-  // numérico candidato e nenhuma estrutura confiável (caput/PARÁGRAFO) pra
-  // saber qual é o principal — comum em cláusulas com categorias diferentes
-  // no mesmo parágrafo, e sobretudo em textos SEM o padrão CCT/ACT/Mediador
-  // do MTE (propostas sindicais em negociação, registro de prática interna),
-  // onde não há marcador estrutural nenhum pra confiar. Este passo roda só
-  // sobre essas linhas — nunca recalcula o que já saiu determinístico.
-  async function refinarAmbiguidadesIA() {
-    if (!resultado) return
-    const config = getAIConfig()
-    if (!config?.provedor || !config?.chave) {
-      return setErro('Configure um provedor de IA nas Configurações para usar o refinamento assistido.')
-    }
-    setRefinandoIA(true); setErro(''); setStatusRefinamentoIA('')
-    try {
-      const itens = []
-      for (const linha of linhasResultado) {
+      // Recalcula as linhas localmente a partir do resultado já com os novos pares
+      const linhasAtuais = computarLinhasParaVerificacao(resultadoAtual)
+      let overridesAtuais = { ...overridesAmbiguidadeIA }
+
+      // Passo 2 — refinamento dos vereditos "Ambígua"
+      setStatusVerificacaoIA('Etapa 2/3 — refinando vereditos ambíguos...')
+      const itensAmbiguos = []
+      for (const linha of linhasAtuais) {
         if (!linha.clausulaBase) continue
-        for (const fc of resultado.comparadas) {
+        for (const fc of resultadoAtual.comparadas) {
           const av = linha.avaliacoes[fc]
           if (av?.status === 'Ambigua' && av.candidatos) {
-            itens.push({
+            itensAmbiguos.push({
               id: `${linha.clausulaBase.id}|${fc}`,
               titulo: linha.clausulaBase.titulo,
               textoBase: linha.clausulaBase.conteudo,
@@ -326,38 +338,20 @@ export default function Negociacao() {
           }
         }
       }
-      if (!itens.length) { setStatusRefinamentoIA('Nenhum veredito ambíguo encontrado.'); setRefinandoIA(false); return }
-      const resolucoes = await refinarVereditosAmbiguos(itens, setStatusRefinamentoIA)
-      const novosOverrides = { ...overridesAmbiguidadeIA }
-      for (const r of resolucoes) novosOverrides[r.id] = r
-      setOverridesAmbiguidadeIA(novosOverrides)
-    } catch (e) {
-      setErro('Erro no refinamento por IA: ' + e.message)
-    }
-    setRefinandoIA(false)
-  }
+      if (itensAmbiguos.length) {
+        const resolucoes = await refinarVereditosAmbiguos(itensAmbiguos, setStatusVerificacaoIA)
+        for (const r of resolucoes) overridesAtuais[r.id] = r
+      }
 
-  // ─── Auditoria de "Redação Diferente" assistida por IA ──────────────────────
-  // "Modificada" (Redação Diferente) é o que sobra quando a cláusula não tem
-  // NENHUM valor numérico pra comparar — o algoritmo não leu o conteúdo, só
-  // mediu que o texto é diferente. Essa auditoria manda o texto completo pra
-  // IA verificar se a diferença é só de forma ou esconde uma diferença
-  // substantiva de direitos/obrigações que o algoritmo não tinha como ver.
-  async function auditarRedacaoDiferenteIA() {
-    if (!resultado) return
-    const config = getAIConfig()
-    if (!config?.provedor || !config?.chave) {
-      return setErro('Configure um provedor de IA nas Configurações para usar a auditoria assistida.')
-    }
-    setAuditandoIA(true); setErro(''); setStatusAuditoriaIA('')
-    try {
-      const itens = []
-      for (const linha of linhasResultado) {
+      // Passo 3 — auditoria dos "Redação Diferente"
+      setStatusVerificacaoIA('Etapa 3/3 — auditando cláusulas de redação diferente...')
+      const itensModificados = []
+      for (const linha of linhasAtuais) {
         if (!linha.clausulaBase) continue
-        for (const fc of resultado.comparadas) {
+        for (const fc of resultadoAtual.comparadas) {
           const av = linha.avaliacoes[fc]
           if (av?.status === 'Modificada' && linha.pares[fc]?.clausulaB) {
-            itens.push({
+            itensModificados.push({
               id: `${linha.clausulaBase.id}|${fc}`,
               titulo: linha.clausulaBase.titulo,
               textoBase: linha.clausulaBase.conteudo,
@@ -366,17 +360,19 @@ export default function Negociacao() {
           }
         }
       }
-      if (!itens.length) { setStatusAuditoriaIA('Nenhuma cláusula "Redação Diferente" encontrada.'); setAuditandoIA(false); return }
-      const resolucoes = await auditarRedacaoDiferente(itens, setStatusAuditoriaIA)
-      const novosOverrides = { ...overridesAmbiguidadeIA }
-      for (const r of resolucoes) novosOverrides[r.id] = r
-      setOverridesAmbiguidadeIA(novosOverrides)
-    } catch (e) {
-      setErro('Erro na auditoria por IA: ' + e.message)
-    }
-    setAuditandoIA(false)
-  }
+      if (itensModificados.length) {
+        const resolucoes = await auditarRedacaoDiferente(itensModificados, setStatusVerificacaoIA)
+        for (const r of resolucoes) overridesAtuais[r.id] = r
+      }
 
+      setResultado(resultadoAtual)
+      setOverridesAmbiguidadeIA(overridesAtuais)
+      setStatusVerificacaoIA(`✅ Verificação concluída — ${itensAmbiguos.length} ambígua(s) e ${itensModificados.length} redação(ões) diferente(s) revisadas por IA.`)
+    } catch (e) {
+      setErro('Erro na verificação por IA: ' + e.message)
+    }
+    setVerificandoIA(false)
+  }
 
   const linhasResultado = (() => {
     if (!resultado) return []
@@ -798,20 +794,10 @@ export default function Negociacao() {
               </p>
             </div>
             <div className="flex gap-2 items-center flex-wrap justify-end">
-              {statusPareamentoIA && <span className="text-[10px] text-slate-400 max-w-[180px] truncate" title={statusPareamentoIA}>{statusPareamentoIA}</span>}
-              <button onClick={pareamentoIA} disabled={pareandoIA} className="btn-secondary text-xs py-1"
-                title="Usa a IA configurada para tentar parear, entre as cláusulas que ficaram sem correspondência, aquelas que tratam do mesmo tema com redação muito diferente (ex.: 'Banco de Horas' vs 'Regime de Compensação Horária'). Cobre os casos 'Sem Previsão' e 'Exclusiva'.">
-                {pareandoIA ? '⏳ Pareando com IA...' : '🤖 Pareamento com IA'}
-              </button>
-              {statusRefinamentoIA && <span className="text-[10px] text-slate-400 max-w-[180px] truncate" title={statusRefinamentoIA}>{statusRefinamentoIA}</span>}
-              <button onClick={refinarAmbiguidadesIA} disabled={refinandoIA} className="btn-secondary text-xs py-1"
-                title="Usa a IA configurada para tentar resolver vereditos marcados como 'Ambígua' — cláusulas com mais de um valor numérico candidato (ex.: valores por categoria/cargo diferentes) e sem estrutura confiável pra decidir sozinho qual se aplica.">
-                {refinandoIA ? '⏳ Refinando...' : '🤖 Refinar ambíguos'}
-              </button>
-              {statusAuditoriaIA && <span className="text-[10px] text-slate-400 max-w-[180px] truncate" title={statusAuditoriaIA}>{statusAuditoriaIA}</span>}
-              <button onClick={auditarRedacaoDiferenteIA} disabled={auditandoIA} className="btn-secondary text-xs py-1"
-                title="Usa a IA configurada para ler o texto completo das cláusulas marcadas 'Redação Diferente' (sem valor numérico pra comparar) e verificar se a diferença é só de forma ou esconde uma diferença substantiva de direitos/obrigações.">
-                {auditandoIA ? '⏳ Auditando...' : '🤖 Auditar redação diferente'}
+              {statusVerificacaoIA && <span className="text-[10px] text-slate-400 max-w-[220px] truncate" title={statusVerificacaoIA}>{statusVerificacaoIA}</span>}
+              <button onClick={verificacaoCompletaIA} disabled={verificandoIA} className="btn-secondary text-xs py-1"
+                title="Roda em sequência: (1) pareamento das cláusulas sem correspondência, (2) refinamento dos vereditos 'Ambígua' e (3) auditoria das cláusulas 'Redação Diferente' — tudo com a IA configurada, num único clique.">
+                {verificandoIA ? '⏳ Verificando...' : '🤖 Verificação Completa com IA'}
               </button>
               <button onClick={exportarExcel} className="btn-secondary text-xs py-1">📊 {selecionados.size > 0 ? `Excel (${selecionados.size})` : 'Excel'}</button>
               <button onClick={exportarPDF}   className="btn-secondary text-xs py-1">📄 {selecionados.size > 0 ? `PDF (${selecionados.size})` : 'PDF'}</button>

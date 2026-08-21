@@ -29,6 +29,33 @@ const SINONIMOS_LAB = {
   'vigencia': 'vigencia', 'periodo': 'vigencia', 'abrangencia': 'abrangencia',
 }
 
+// Lematização leve de conjugações comuns em CCT/ACT — bounded e explícita de
+// propósito (evita o risco de um stemmer genérico colidir com palavras não
+// relacionadas, ex.: "câmara" virando "câm" por engano). Cobre exatamente o
+// tipo de ruído que faz duas cláusulas SUBSTANCIALMENTE IGUAIS caírem em
+// lados opostos do corte de 95% de similaridade só por causa de concordância
+// singular/plural ou conjugação verbal ("a EMPRESA pagará" vs "as empresas
+// pagarão") — sem isso, o mesmo tipo de diferença puramente gramatical produz
+// vereditos diferentes ("Igual" vs "Modificada") dependendo só do tamanho do
+// texto, o que é o comportamento reportado como "não passa segurança".
+const LEMA_VERBAL = {
+  fica: 'fic', ficam: 'fic', ficara: 'fic', ficarao: 'fic', ficando: 'fic', ficou: 'fic', ficaram: 'fic',
+  paga: 'pag', pagam: 'pag', pagara: 'pag', pagarao: 'pag', pagando: 'pag', pagou: 'pag', pagaram: 'pag', pago: 'pag', pagos: 'pag',
+  deve: 'dev', devem: 'dev', devera: 'dev', deverao: 'dev', devendo: 'dev', deveu: 'dev', deveram: 'dev',
+  pode: 'pod', podem: 'pod', podera: 'pod', poderao: 'pod', podendo: 'pod',
+  garante: 'garant', garantem: 'garant', garantira: 'garant', garantirao: 'garant', garantido: 'garant', garantida: 'garant', garantidos: 'garant', garantidas: 'garant',
+  mantem: 'mant', mantera: 'mant', manterao: 'mant', mantido: 'mant', mantida: 'mant', mantidos: 'mant', mantidas: 'mant', manter: 'mant',
+  assegura: 'assegur', asseguram: 'assegur', assegurara: 'assegur', assegurarao: 'assegur', assegurado: 'assegur', assegurada: 'assegur', assegurados: 'assegur', asseguradas: 'assegur',
+  concede: 'conced', concedem: 'conced', concedera: 'conced', concederao: 'conced', concedido: 'conced', concedida: 'conced', concedidos: 'conced', concedidas: 'conced',
+  obrigado: 'obrig', obrigada: 'obrig', obrigados: 'obrig', obrigadas: 'obrig', obriga: 'obrig', obrigam: 'obrig',
+  sera: 'ser', serao: 'ser', foi: 'ser', foram: 'ser', sao: 'ser',
+  empresa: 'empresa', empresas: 'empresa',
+  empregado: 'empregado', empregados: 'empregado',
+  trabalhador: 'trabalhador', trabalhadores: 'trabalhador',
+  dependente: 'dependente', dependentes: 'dependente',
+  beneficio: 'beneficio', beneficios: 'beneficio',
+}
+
 function tokenize(text) {
   return text
     .toLowerCase()
@@ -36,6 +63,7 @@ function tokenize(text) {
     .replace(/[^a-z0-9\s]/g, ' ')
     .split(/\s+/)
     .filter(t => t.length > 2 && !STOPWORDS.has(t))
+    .map(t => LEMA_VERBAL[t] || t)
 }
 
 // tokenize com expansão de sinônimos — usado pelo matching da Negociação
@@ -165,6 +193,11 @@ function extrairNumericos(texto) {
   //    e registros de prática interna da empresa, que chegam como texto
   //    corrido livre. Para esses, não há sinal estrutural nenhum para confiar
   //    — é justamente onde o Math.max() tem mais chance de misturar categorias.
+  //
+  // IMPORTANTE: mesmo quando isso dá "ambíguo" aqui, avaliarSuperioridade()
+  // tenta ANTES uma comparação por categoria paralela (ver
+  // compararCategoriasParalelas) usando o `caput` retornado abaixo — só cai
+  // de fato em "Ambigua" quando essa tentativa também não resolve.
   const distintos = arr => new Set(arr.map(n => n.toFixed(2))).size
   const ambiguoPercentual = distintos(percentuaisHeadline) > 1
     || (!estruturado && distintos(percentuais) > 1)
@@ -176,8 +209,37 @@ function extrairNumericos(texto) {
   return {
     percentuais, percentuaisHeadline, monetarios, monetariosHeadline,
     todos: [...percentuais, ...monetarios], estruturado, ambiguoPercentual, ambiguoMonetario,
-    progressaoMonetaria,
+    progressaoMonetaria, caput,
   }
+}
+
+// ── Comparação por categoria paralela ────────────────────────────────────────
+// Quando o caput lista MÚLTIPLOS valores para MÚLTIPLAS categorias na mesma
+// cláusula (ex.: "R$ 35,00 para almoço, R$ 35,00 para jantar, R$ 15,00 para
+// café, R$ 15,00 para pernoite"), usar Math.max() sozinho mistura categorias
+// diferentes. Mas se AMBAS as fontes têm exatamente a MESMA QUANTIDADE de
+// valores no caput (mesma estrutura de categorias, o que é o normal quando
+// se compara duas revisões do mesmo instrumento/mesma família de cláusula),
+// dá pra comparar posição a posição — cada categoria contra ela mesma — em
+// vez de descartar tudo como "Ambígua". Só aplicamos quando o resultado é
+// CONSISTENTE (todas as categorias sobem, todas descem, ou todas iguais); se
+// for misto (algumas sobem, outras descem), a ambiguidade É real — mantemos
+// "Ambigua" porque de fato não existe uma resposta única de "quem é melhor".
+function extrairValoresOrdenados(caputTexto) {
+  return [...(caputTexto || '').matchAll(/R\$\s*([\d.]+(?:,\d{2})?)/g)]
+    .map(m => parseFloat(m[1].replace(/\./g, '').replace(',', '.')))
+    .filter(n => !isNaN(n) && n > 0)
+}
+
+function compararCategoriasParalelas(caputBase, caputComp) {
+  const valoresBase = extrairValoresOrdenados(caputBase)
+  const valoresComp = extrairValoresOrdenados(caputComp)
+  if (valoresBase.length < 2 || valoresBase.length !== valoresComp.length) return null
+  const diffs = valoresBase.map((v, i) => valoresComp[i] - v)
+  const positivos = diffs.filter(d => d >= 0.01).length
+  const negativos = diffs.filter(d => d <= -0.01).length
+  if (positivos > 0 && negativos > 0) return null // misto — ambiguidade real, não resolver automaticamente
+  return { direcao: positivos > 0 ? 1 : (negativos > 0 ? -1 : 0), valoresBase, valoresComp }
 }
 
 // ─── Nova terminologia de status ─────────────────────────────────────────────
@@ -405,6 +467,23 @@ export function avaliarSuperioridade(textoBase, textoComparado, tituloClausula =
 
   if (monetBaseUsar.length > 0 && monetCompUsar.length > 0) {
     if (numBase.ambiguoMonetario || numComp.ambiguoMonetario) {
+      const paralelo = compararCategoriasParalelas(numBase.caput, numComp.caput)
+      if (paralelo) {
+        const fmt = v => 'R$ ' + v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+        const pares = paralelo.valoresBase.map((v, i) => `${fmt(v)} → ${fmt(paralelo.valoresComp[i])}`).join('; ')
+        if (paralelo.direcao === 0) {
+          return {
+            status: 'Igual',
+            resumo: `Mesmos valores em todas as ${paralelo.valoresBase.length} categorias identificadas no caput (${pares}).${contextoVigencia}`,
+          }
+        }
+        // direcao > 0: comparada maior em todas as categorias → base inferior
+        // direcao < 0: comparada menor em todas as categorias → base superior
+        return {
+          status: paralelo.direcao > 0 ? 'Inferior' : 'Superior',
+          resumo: `Todas as ${paralelo.valoresBase.length} categorias de valor no caput ${paralelo.direcao > 0 ? 'aumentaram' : 'diminuíram'} na fonte comparada em relação à base, na mesma direção em cada uma (${pares}) — comparação por categoria (posição a posição), não pelo maior valor isolado.${contextoVigencia}`,
+        }
+      }
       const fmt = v => 'R$ ' + v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
       const listar = arr => [...new Set(arr.map(n => fmt(n)))].join(', ')
       return {
