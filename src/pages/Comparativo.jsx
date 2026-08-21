@@ -9,6 +9,8 @@ import { gerarExcelComparativo } from '../services/reports/excelReport'
 import { gerarPDFComparativo } from '../services/reports/pdfReport'
 import { gerarAnaliseNegocial } from '../services/ai/analiseNegocial'
 import { gerarExcelAnaliseNegocial } from '../services/reports/relatorioNegocialExcel'
+import { gerarParecerObjetivo } from '../services/ai/parecerObjetivo'
+import { gerarExcelComparativoObjetivo } from '../services/reports/comparativoObjetivoExcel'
 import { getAIConfig } from '../services/ai/index'
 
 function diffTexto(textoA, textoB) {
@@ -78,6 +80,8 @@ export default function Comparativo() {
   const [gerandoAnaliseIA,setGerandoAnaliseIA]=useState(false)
   const [statusAnaliseIA,setStatusAnaliseIA]=useState('')
   const [erroAnaliseIA,setErroAnaliseIA]=useState('')
+  const [gerandoParecerIA,setGerandoParecerIA]=useState(false)
+  const [statusParecerIA,setStatusParecerIA]=useState('')
 
   useEffect(()=>{
     if(!user) return
@@ -247,6 +251,28 @@ export default function Comparativo() {
     else gerarPDFComparativo(itens,iA,iB)
   }
 
+  // Monta { fontesInfo, itens, pontos, resultadosDeterministicos } reaproveitados
+  // pelos dois botões de IA — nunca re-pareia cláusulas, só reorganiza o que
+  // `filtrado`/`resultado` já calcularam.
+  function montarPontosComparativo(){
+    const fontesInfo=[
+      {chave:'A',label:iA?.nome||'Instrumento A'},
+      {chave:'B',label:iB?.nome||'Instrumento B'},
+    ]
+    const itens=selecionados.size>0?filtrado.filter((_,i)=>selecionados.has(i)):filtrado
+    const resultadosDeterministicos=new Map()
+    const pontos=itens.map((r,i)=>{
+      const id=r.clausulaA?.id || r.clausulaB?.id || `linha-${i}`
+      resultadosDeterministicos.set(id,[{label:iB?.nome||'Instrumento B',statusLabel:r.status?.label||'—'}])
+      return {
+        id,
+        tituloReferencia: r.clausulaA?.titulo || r.clausulaB?.titulo || 'Sem título',
+        porFonte:{ A:r.clausulaA||null, B:r.clausulaB||null },
+      }
+    })
+    return { fontesInfo, itens, pontos, resultadosDeterministicos }
+  }
+
   // ─── Análise Negocial assistida por IA (Mapa de Pontos de Negociação) ──────
   // Reaproveita o pareamento já calculado em `filtrado`/`resultado` — só pede
   // à IA os campos analíticos/narrativos. Nunca re-pareia cláusulas.
@@ -257,18 +283,8 @@ export default function Comparativo() {
       setErroAnaliseIA('Configure um provedor de IA nas Configurações para gerar a análise negocial.')
       return
     }
-    const fontesInfo=[
-      {chave:'A',label:iA?.nome||'Instrumento A'},
-      {chave:'B',label:iB?.nome||'Instrumento B'},
-    ]
-    const itens=selecionados.size>0?filtrado.filter((_,i)=>selecionados.has(i)):filtrado
+    const { fontesInfo, itens, pontos }=montarPontosComparativo()
     if(!itens.length){ setErroAnaliseIA('Nenhuma cláusula para analisar com os filtros/seleção atuais.'); return }
-
-    const pontos=itens.map((r,i)=>({
-      id: r.clausulaA?.id || r.clausulaB?.id || `linha-${i}`,
-      tituloReferencia: r.clausulaA?.titulo || r.clausulaB?.titulo || 'Sem título',
-      porFonte:{ A:r.clausulaA||null, B:r.clausulaB||null },
-    }))
 
     setGerandoAnaliseIA(true); setErroAnaliseIA(''); setStatusAnaliseIA('')
     try{
@@ -282,6 +298,31 @@ export default function Comparativo() {
       setErroAnaliseIA('Erro ao gerar análise negocial: '+e.message)
     }
     setGerandoAnaliseIA(false)
+  }
+
+  // ─── Comparativo Objetivo assistido por IA (aba única, mais enxuto) ────────
+  async function gerarRelatorioObjetivoIA(){
+    if(!resultado) return
+    const config=getAIConfig()
+    if(!config?.provedor||!config?.chave){
+      setErroAnaliseIA('Configure um provedor de IA nas Configurações para gerar o comparativo objetivo.')
+      return
+    }
+    const { fontesInfo, itens, pontos, resultadosDeterministicos }=montarPontosComparativo()
+    if(!itens.length){ setErroAnaliseIA('Nenhuma cláusula para analisar com os filtros/seleção atuais.'); return }
+
+    setGerandoParecerIA(true); setErroAnaliseIA(''); setStatusParecerIA('')
+    try{
+      const classificacoes=await gerarParecerObjetivo(pontos,fontesInfo,setStatusParecerIA)
+      gerarExcelComparativoObjetivo(pontos,resultadosDeterministicos,classificacoes,fontesInfo,{
+        titulo:'COMPARATIVO OBJETIVO — '+fontesInfo.map(f=>f.label).join(' × '),
+        subtitulo:`Gerado em ${new Date().toLocaleDateString('pt-BR')} — Motor CCT`,
+      })
+      setStatusParecerIA(`✅ Relatório gerado — ${classificacoes.size} de ${pontos.length} ponto(s) analisados.`)
+    }catch(e){
+      setErroAnaliseIA('Erro ao gerar comparativo objetivo: '+e.message)
+    }
+    setGerandoParecerIA(false)
   }
 
   return (
@@ -434,6 +475,11 @@ export default function Comparativo() {
               title="Gera um Mapa de Pontos de Negociação (Excel, 3 abas: Análise Negocial, Alterações Meramente Textuais, Resumo Executivo) — a IA lê o conteúdo de cada cláusula pareada e classifica tipo de alteração, responsável, direção do efeito, relevância e orientação de mesa.">
               {gerandoAnaliseIA?'⏳ Gerando análise...':`🧠 Análise Negocial (IA)${selecionados.size>0?` (${selecionados.size})`:''}`}
             </button>
+            {statusParecerIA&&<span className="text-[10px] text-slate-400 max-w-[220px] truncate" title={statusParecerIA}>{statusParecerIA}</span>}
+            <button className="btn-secondary text-xs" onClick={gerarRelatorioObjetivoIA} disabled={gerandoParecerIA}
+              title="Gera uma aba única (Excel) com o conteúdo de cada fonte, o Resultado determinístico já calculado (sem IA) e, por IA, um Parecer objetivo curto + Grau (ALTA/MÉDIA/BAIXA) por ponto.">
+              {gerandoParecerIA?'⏳ Gerando parecer...':`📋 Comparativo Objetivo (IA)${selecionados.size>0?` (${selecionados.size})`:''}`}
+            </button>
           </div>
           {erroAnaliseIA&&<p className="text-xs text-red-600 mb-2">{erroAnaliseIA}</p>}
 
@@ -507,6 +553,9 @@ export default function Comparativo() {
           <button onClick={()=>exportar('pdf')}   className="text-xs bg-white/15 hover:bg-white/25 px-3 py-1.5 rounded-lg transition-colors">📄 PDF</button>
           <button onClick={gerarRelatorioNegocialIA} disabled={gerandoAnaliseIA} className="text-xs bg-white/15 hover:bg-white/25 px-3 py-1.5 rounded-lg transition-colors">
             {gerandoAnaliseIA?'⏳ Gerando...':'🧠 Análise Negocial (IA)'}
+          </button>
+          <button onClick={gerarRelatorioObjetivoIA} disabled={gerandoParecerIA} className="text-xs bg-white/15 hover:bg-white/25 px-3 py-1.5 rounded-lg transition-colors">
+            {gerandoParecerIA?'⏳ Gerando...':'📋 Comparativo Objetivo (IA)'}
           </button>
           <button onClick={()=>setSelecionados(new Set())} className="text-xs opacity-60 hover:opacity-100 ml-1">✕ Limpar</button>
         </div>
