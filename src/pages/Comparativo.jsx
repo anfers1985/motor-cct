@@ -267,7 +267,10 @@ export default function Comparativo() {
       return {
         id,
         tituloReferencia: r.clausulaA?.titulo || r.clausulaB?.titulo || 'Sem título',
-        porFonte:{ A:r.clausulaA||null, B:r.clausulaB||null },
+        porFonte:{
+          A: r.clausulaA ? { ...r.clausulaA, motivoIA: r.motivoIA } : null,
+          B: r.clausulaB ? { ...r.clausulaB, motivoIA: r.motivoIA } : null,
+        },
       }
     })
     return { fontesInfo, itens, pontos, resultadosDeterministicos }

@@ -548,10 +548,12 @@ export default function Negociacao() {
     const { comparadas, baseEfetiva } = resultado
     const fBase = FONTES_CONFIG[baseEfetiva]?.label || baseEfetiva
 
-    const celulaFonte = (clausula) => {
+    const celulaFonte = (clausula, motivoIA) => {
       if (!clausula) return ''
       const cab = (clausula.numero ? `Nº ${clausula.numero} — ` : '') + (clausula.titulo || '')
-      return clausula.conteudo ? `${cab}\n\n${clausula.conteudo}` : cab
+      let texto = clausula.conteudo ? `${cab}\n\n${clausula.conteudo}` : cab
+      if (motivoIA) texto += `\n\n🤖 PAREAMENTO SUGERIDO POR IA — motivo: ${motivoIA}\n(redação muito diferente do casamento automático; confirme se é de fato o mesmo instituto antes de considerar definitivo)`
+      return texto
     }
 
     const wb = XLSX.utils.book_new()
@@ -567,7 +569,7 @@ export default function Negociacao() {
         const av = r.avaliacoes?.[fc] || {}
         const fl = FONTES_CONFIG[fc]?.label || fc
         row[fl] = par?.clausulaB
-          ? celulaFonte(par.clausulaB)
+          ? celulaFonte(par.clausulaB, par.motivoIA)
           : (av.status === 'Exclusiva' ? celulaFonte(r.clausulaNova) : 'Não encontrado nesta fonte')
         if (av.status) {
           const cfg = STATUS_CONFIG[av.status] || {}
@@ -612,7 +614,9 @@ export default function Negociacao() {
       const id = r.clausulaBase?.id || r.clausulaNova?.id || `linha-${r.idx ?? i}`
       const det = []
       for (const fc of comparadas) {
-        porFonte[fc] = r.pares?.[fc]?.clausulaB || (fc === r.fontaExclusiva ? r.clausulaNova : null)
+        const par = r.pares?.[fc]
+        const clausula = par?.clausulaB || (fc === r.fontaExclusiva ? r.clausulaNova : null)
+        porFonte[fc] = clausula ? { ...clausula, motivoIA: par?.motivoIA } : null
         const av = r.avaliacoes?.[fc]
         if (av?.status) {
           const cfg = STATUS_CONFIG[av.status] || {}
@@ -981,13 +985,18 @@ export default function Negociacao() {
                                 {cfgFonte?.icone} {cfgFonte?.label}
                                 {par?.clausulaB?.numero && <span className="font-normal normal-case text-slate-400"> · Nº {par.clausulaB.numero}</span>}
                                 {par?.origemIA && (
-                                  <span title="Este pareamento foi sugerido pela IA (redação muito diferente para o casamento automático por similaridade) — revise antes de considerar definitivo." className="ml-1 font-normal normal-case text-[10px] px-1.5 py-0.5 rounded-full bg-indigo-100 text-indigo-700 border border-indigo-200">🤖 pareado por IA</span>
+                                  <span title={par.motivoIA ? `Motivo da IA: ${par.motivoIA}` : 'Este pareamento foi sugerido pela IA (redação muito diferente para o casamento automático por similaridade) — revise antes de considerar definitivo.'} className="ml-1 font-normal normal-case text-[10px] px-1.5 py-0.5 rounded-full bg-indigo-100 text-indigo-700 border border-indigo-200">🤖 pareado por IA</span>
                                 )}
                               </p>
                               <span title={av.origemIA ? `Revisado por IA — ${av.resumo}` : av.resumo} className={`text-xs px-2 py-0.5 rounded-full font-semibold border ${cfg2.cls || 'bg-slate-100 text-slate-500'}`}>
                                 {cfg2.icone} {cfg2.relLabel || av.status || '—'}{av.origemIA && ' 🤖'}
                               </span>
                             </div>
+                            {par?.origemIA && par?.motivoIA && (
+                              <p className="text-[10px] text-indigo-600 -mt-1 mb-2">
+                                🤖 Pareado por IA — motivo: "{par.motivoIA}". Confirme se de fato é o mesmo instituto antes de considerar definitivo.
+                              </p>
+                            )}
                             {av.origemIA && (
                               <p className="text-[10px] text-indigo-600 -mt-1 mb-2">
                                 🤖 Veredito original era "{STATUS_CONFIG[av.veredictoOriginal?.status]?.label || av.veredictoOriginal?.status}" e foi revisado por IA — revise antes de considerar definitivo.

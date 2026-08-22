@@ -115,9 +115,20 @@ export function similaridade(textoA, textoB) {
 // limitado do início do texto.
 const CAPUT_MAX = 900
 
+// IMPORTANTE: o corte por CAPUT_MAX só se aplica quando NÃO existe nenhum
+// marcador de PARÁGRAFO no texto (cláusula corrida, sem essa estrutura) — aí
+// sim limitamos a janela pra não escanear um texto gigante sem estrutura
+// nenhuma pra confiar. Quando EXISTE um marcador de PARÁGRAFO, o caput real é
+// tudo antes dele, não importa o tamanho: alguns instrumentos (comum em CCTs
+// que anexam um preâmbulo de justificativa jurídica, ex. "Considerando que...")
+// têm um caput de bem mais de 900 caracteres antes do valor operativo (%, R$)
+// aparecer. Aplicar o corte também nesse caso cortava o percentual/valor real
+// fora da janela analisada, fazendo a cláusula cair (erradamente) na
+// comparação textual pura por "falta" de número, quando o número está lá,
+// só que depois do corte artificial.
 function extrairCaput(texto) {
   const m = texto.match(/PAR[AÁ]GRAFO\s/i)
-  const limite = m ? Math.min(m.index, CAPUT_MAX) : CAPUT_MAX
+  const limite = m ? m.index : CAPUT_MAX
   return texto.slice(0, limite)
 }
 
@@ -231,9 +242,17 @@ function extrairValoresOrdenados(caputTexto) {
     .filter(n => !isNaN(n) && n > 0)
 }
 
-function compararCategoriasParalelas(caputBase, caputComp) {
-  const valoresBase = extrairValoresOrdenados(caputBase)
-  const valoresComp = extrairValoresOrdenados(caputComp)
+function extrairPercentuaisOrdenados(caputTexto) {
+  const t = (caputTexto || '').replace(/\./g, '').replace(/,/g, '.')
+  return [...t.matchAll(/(\d+(?:\.\d+)?)\s*%/g)]
+    .map(m => parseFloat(m[1]))
+    .filter(n => !isNaN(n) && n > 0 && n < 200)
+}
+
+function compararCategoriasParalelas(caputBase, caputComp, tipo = 'monetario') {
+  const extrair = tipo === 'percentual' ? extrairPercentuaisOrdenados : extrairValoresOrdenados
+  const valoresBase = extrair(caputBase)
+  const valoresComp = extrair(caputComp)
   if (valoresBase.length < 2 || valoresBase.length !== valoresComp.length) return null
   const diffs = valoresBase.map((v, i) => valoresComp[i] - v)
   const positivos = diffs.filter(d => d >= 0.01).length
@@ -422,6 +441,21 @@ export function avaliarSuperioridade(textoBase, textoComparado, tituloClausula =
 
   if (temHeadlineAmbos && percBaseUsar.length > 0 && percCompUsar.length > 0 && (percDiferem || !monetDisponveis)) {
     if (numBase.ambiguoPercentual || numComp.ambiguoPercentual) {
+      const paralelo = compararCategoriasParalelas(numBase.caput, numComp.caput, 'percentual')
+      if (paralelo) {
+        const fmt = v => v.toFixed(2).replace('.', ',') + '%'
+        const pares = paralelo.valoresBase.map((v, i) => `${fmt(v)} → ${fmt(paralelo.valoresComp[i])}`).join('; ')
+        if (paralelo.direcao === 0) {
+          return {
+            status: 'Igual',
+            resumo: `Mesmos percentuais em todas as ${paralelo.valoresBase.length} categorias identificadas no caput (${pares}).${contextoVigencia}`,
+          }
+        }
+        return {
+          status: paralelo.direcao > 0 ? 'Inferior' : 'Superior',
+          resumo: `Todos os ${paralelo.valoresBase.length} percentuais no caput ${paralelo.direcao > 0 ? 'aumentaram' : 'diminuíram'} na fonte comparada em relação à base, na mesma direção em cada um (${pares}) — comparação por categoria (posição a posição), não pelo maior valor isolado.${contextoVigencia}`,
+        }
+      }
       const listar = arr => [...new Set(arr.map(n => n.toFixed(2).replace('.', ',') + '%'))].join(', ')
       return {
         status: 'Ambigua',
@@ -723,7 +757,7 @@ export function compararInstrumentosNeg(clausulasA, clausulasB) {
 export function aplicarParesSugeridosIA(comparativo, sugestoes) {
   if (!sugestoes?.length) return comparativo
   const resultado = [...comparativo]
-  for (const { idA, idB } of sugestoes) {
+  for (const { idA, idB, motivo } of sugestoes) {
     const idxA = resultado.findIndex(r => r.clausulaA?.id === idA && !r.clausulaB && r.status.label === 'SUPRIMIDA')
     const idxB = resultado.findIndex(r => r.clausulaB?.id === idB && !r.clausulaA && r.status.label === 'NOVA')
     if (idxA === -1 || idxB === -1) continue // sugestão aponta para algo já usado ou inexistente — ignora com segurança
@@ -731,7 +765,7 @@ export function aplicarParesSugeridosIA(comparativo, sugestoes) {
     const b = resultado[idxB].clausulaB
     const score = similaridade(a.conteudo, b.conteudo)
     const status = { ...classificarSimilaridade(score, a.conteudo, b.conteudo), label: 'ALTERADA' }
-    const merged = { clausulaA: a, clausulaB: b, score, status, origemIA: true }
+    const merged = { clausulaA: a, clausulaB: b, score, status, origemIA: true, motivoIA: motivo }
     // Remove as duas linhas soltas e insere a linha mesclada no lugar da primeira
     const menor = Math.min(idxA, idxB), maior = Math.max(idxA, idxB)
     resultado.splice(maior, 1)

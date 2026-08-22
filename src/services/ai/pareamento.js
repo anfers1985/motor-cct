@@ -49,6 +49,33 @@ pares que só tangenciam o mesmo assunto genérico (ex.: duas cláusulas sobre "
 trabalho" só devem ser pareadas se tratarem do MESMO mecanismo específico). Na dúvida, não
 pareie — é preferível deixar como exclusiva do que criar um par forçado.
 
+ATENÇÃO A UM ERRO ESPECÍFICO E COMUM: cláusulas de contribuição/taxa sindical usam vocabulário
+muito parecido (contribuição, taxa, sindicato, empresa, recolhimento, desconto) mesmo quando são
+INSTITUTOS COMPLETAMENTE DIFERENTES. Antes de parear qualquer cláusula desse tipo, confirme que
+o BENEFICIÁRIO e o PAGADOR são os mesmos dos dois lados:
+- Contribuição/Taxa em favor do SINDICATO PROFISSIONAL (dos empregados/trabalhadores), descontada
+  do salário do EMPREGADO — ex.: "Taxa Negocial", "Contribuição Assistencial dos Empregados",
+  "Mensalidade Associativa".
+- Contribuição em favor do SINDICATO PATRONAL (das empresas), paga pela PRÓPRIA EMPRESA com
+  recursos próprios (não descontada de empregado) — ex.: "Contribuição Confederativa Patronal",
+  "Contribuição Assistencial Patronal", "Taxa de Contribuição Permanente" (quando paga pela
+  empresa ao sindicato patronal).
+Essas duas famílias NUNCA são o mesmo instituto, mesmo com vocabulário parecido — palavras como
+"categoria econômica"/"patronal" de um lado e "empregados"/"trabalhador" do outro são um sinal
+forte de que são famílias diferentes. Se não tiver certeza absoluta de qual sindicato/categoria
+cada cláusula beneficia, NÃO pareie.
+
+ATENÇÃO A ITENS CURTOS/FRAGMENTADOS: pautas de reivindicação, rascunhos e textos com OCR
+malfeito costumam trazer itens muito curtos e sem contexto (ex.: "PTS 5%", uma sigla solta, um
+percentual sem explicação do que se refere). Para esses, NÃO tente adivinhar a que instituto
+jurídico o item se refere só pela proximidade de posição/número ou por semelhança superficial de
+formato (ex.: "tem um percentual, a cláusula do outro lado também tem um percentual, então deve
+ser a mesma coisa" — isso é um raciocínio INVÁLIDO). Só pareie um item curto/fragmentado se o
+texto contiver uma palavra-chave que identifique claramente o MESMO instituto da cláusula do
+outro lado (ex.: "auxílio combustível" só pareia com cláusula que já fala de combustível). Sem
+essa palavra-chave, trate como dado insuficiente e NÃO pareie — é preferível reportar como
+"sem previsão"/exclusiva do que inventar uma correlação.
+
 LISTA A:
 ${fmt(leftoverA, 'A')}
 

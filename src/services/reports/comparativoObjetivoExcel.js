@@ -4,7 +4,9 @@ import { GRAU_CONFIG } from '../ai/parecerObjetivo'
 function celulaFonte(c) {
   if (!c) return 'Não prevê / sem correspondência nesta fonte.'
   const cab = (c.numero ? `Nº ${c.numero} — ` : '') + (c.titulo || '')
-  return c.conteudo ? `${cab}\n\n${c.conteudo}` : cab
+  let texto = c.conteudo ? `${cab}\n\n${c.conteudo}` : cab
+  if (c.motivoIA) texto += `\n\n🤖 PAREAMENTO SUGERIDO POR IA — motivo: ${c.motivoIA}\n(redação muito diferente do casamento automático; confirme se é de fato o mesmo instituto antes de considerar definitivo)`
+  return texto
 }
 
 function grauTexto(codigo) {

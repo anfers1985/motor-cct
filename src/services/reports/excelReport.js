@@ -187,8 +187,9 @@ export async function gerarExcelComparativo(resultado, instrumentoA, instrumento
     ['Título — ' + nomeB]: r.clausulaB?.titulo || '',
     ['Conteúdo — ' + nomeB]: r.clausulaB?.conteudo || '',
     'Similaridade': r.score ? (r.score * 100).toFixed(0) + '%' : '',
+    'Pareamento IA': r.origemIA ? `🤖 Sugerido por IA — motivo: ${r.motivoIA || '(sem motivo registrado)'} — confirme se é de fato o mesmo instituto.` : '',
   })))
-  ws['!cols'] = [{ wch: 16 }, { wch: 16 }, { wch: 35 }, { wch: 100 }, { wch: 16 }, { wch: 35 }, { wch: 100 }, { wch: 12 }]
+  ws['!cols'] = [{ wch: 16 }, { wch: 16 }, { wch: 35 }, { wch: 100 }, { wch: 16 }, { wch: 35 }, { wch: 100 }, { wch: 12 }, { wch: 60 }]
   XLSX.utils.book_append_sheet(wb, ws, 'Comparativo Completo')
 
   const ws2 = XLSX.utils.json_to_sheet(resultado.filter(r => ['ALTERADA','MUITO ALTERADA','SUBSTITUÍDA'].includes(r.status.label)).map(r => ({
