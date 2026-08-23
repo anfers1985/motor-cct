@@ -53,6 +53,13 @@ cargo, faixa ou período diferente). Leia o texto e decida:
    têm correspondente clara do outro lado, ou se a informação no texto não é suficiente para
    decidir com segurança, responda "Indeterminado" — não adivinhe.
 
+ATENÇÃO — CONSISTÊNCIA OBRIGATÓRIA entre "status" e "resumo": "status" é sempre do ponto de
+vista da BASE (TEXTO BASE), nunca da comparada. Se o seu "resumo" disser que o TEXTO COMPARADO
+é mais vantajoso/favorável/alto, o "status" tem que ser "Inferior" (a base é PIOR) — nunca
+"Superior". Se disser que o TEXTO BASE é mais vantajoso, "status" é "Superior". Releia sua
+própria resposta antes de responder: o adjetivo que você usar no resumo para descrever qual lado
+"ganha" tem que apontar para o MESMO lado que o "status" escolhido representa.
+
 ${blocos}
 
 SAÍDA OBRIGATÓRIA: retorne APENAS um array JSON válido, nenhum texto antes ou depois, sem
@@ -134,6 +141,14 @@ classificação está certa ou se está mascarando algo mais importante:
    explicando a diferença concreta encontrada.
 3) Se o texto não for suficiente pra decidir com segurança, responda "Indeterminado" — não force
    uma conclusão.
+
+ATENÇÃO — CONSISTÊNCIA OBRIGATÓRIA entre "status" e "resumo": "status" é sempre do ponto de
+vista do TEXTO BASE, nunca do comparado. Se o seu "resumo" disser que o TEXTO COMPARADO é mais
+vantajoso/detalhado/favorável/completo, o "status" tem que ser "Inferior" (a base é PIOR nesse
+ponto) — nunca "Superior". Se disser que o TEXTO BASE é mais vantajoso, "status" é "Superior".
+Releia sua própria resposta antes de responder: o lado que seu resumo descreve como "melhor" tem
+que ser o MESMO lado que o "status" escolhido representa — uma contradição entre os dois é pior
+do que responder "Indeterminado".
 
 ${blocos}
 

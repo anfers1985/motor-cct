@@ -22,7 +22,15 @@ const SINONIMOS_LAB = {
   'cesta': 'cesta', 'basica': 'cesta',
   // plano variável
   'ppr': 'variavel', 'plr': 'variavel', 'participacao': 'variavel', 'resultado': 'variavel',
-  'gratificacao': 'variavel', 'bonus': 'variavel',
+  'bonus': 'variavel',
+  // NOTA: "gratificacao" NÃO entra aqui de propósito. "Gratificação de Férias"
+  // é um instituto FIXO (1/3 constitucional), completamente diferente de PPR/
+  // PLR (remuneração variável ligada a resultado). Incluir "gratificacao" no
+  // mesmo grupo de "variavel" já causou um pareamento errado confirmado
+  // (Gratificação de Férias × "PPR 5%"/"PTS5%" de uma pauta de reivindicação)
+  // — qualquer cláusula com "gratificação" no título ficava com overlap de
+  // sinônimo artificial com qualquer cláusula de PPR/PLR/bônus, mesmo sendo
+  // institutos totalmente diferentes.
   // jornada / banco
   'banco': 'jornada', 'horas': 'jornada', 'jornada': 'jornada', 'horario': 'jornada',
   // vigência
@@ -126,15 +134,25 @@ const CAPUT_MAX = 900
 // fora da janela analisada, fazendo a cláusula cair (erradamente) na
 // comparação textual pura por "falta" de número, quando o número está lá,
 // só que depois do corte artificial.
+//
+// O marcador de parágrafo aceita tanto a palavra por extenso ("PARÁGRAFO
+// PRIMEIRO") quanto o símbolo "§" (ex.: "§ 1º", "§1º-"), muito comum em CCTs —
+// sem reconhecer o símbolo, um texto inteiro dividido em "§ 1º", "§ 2º"...
+// era tratado como SEM estrutura nenhuma, e todos os percentuais/valores de
+// TODAS as seções acabavam despejados juntos no "caput", criando ambiguidade
+// artificial onde na verdade o documento está bem estruturado — só que com
+// outro símbolo.
+const MARCADOR_PARAGRAFO = /PAR[AÁ]GRAFO\s|§\s?\d/i
+
 function extrairCaput(texto) {
-  const m = texto.match(/PAR[AÁ]GRAFO\s/i)
+  const m = texto.match(MARCADOR_PARAGRAFO)
   const limite = m ? m.index : CAPUT_MAX
   return texto.slice(0, limite)
 }
 
 function extrairNumericos(texto) {
   if (!texto) return { percentuais: [], percentuaisHeadline: [], monetarios: [], monetariosHeadline: [], todos: [], estruturado: false, ambiguoPercentual: false, ambiguoMonetario: false }
-  const estruturado = /PAR[AÁ]GRAFO\s/i.test(texto)
+  const estruturado = MARCADOR_PARAGRAFO.test(texto)
   const caput = extrairCaput(texto)
   const t = texto.replace(/\./g, '').replace(/,/g, '.')
   const tCaput = caput.replace(/\./g, '').replace(/,/g, '.')
@@ -160,31 +178,41 @@ function extrairNumericos(texto) {
   // tem 2 valores no caput, mas NÃO é ambiguidade — é reajuste escalonado no
   // tempo, e o valor vigente é o mais recente (último do texto). Isso é bem
   // diferente de "R$ X para vendedores e R$ Y para supervisores", que são
-  // categorias distintas de verdade. Distinguimos verificando se cada valor
-  // do caput está associado a uma âncora temporal ("a partir de", "a contar
-  // de", "desde") nas ~40 posições anteriores — se TODOS estiverem, é
-  // progressão: usamos o último valor em vez de marcar como ambígua.
-  const ANCORA_TEMPORAL = /(?:(?:a\s+partir\s+de|a\s+contar\s+de|desde)\s+[^.;]{0,100}?R\$\s*([\d.]+(?:,\d{2})?))|(?:R\$\s*([\d.]+(?:,\d{2})?)[^.;]{0,60}?(?:a\s+partir\s+de|a\s+contar\s+de|desde))/gi
-  // Progressão exige que o MAIOR valor distinto do caput esteja associado a uma
-  // âncora temporal (é o padrão real: "R$ antigo, reajustado para R$ novo a
-  // partir de [data]" — só o valor mais recente costuma repetir a data; o valor
-  // antigo aparece sozinho, sem "a partir de" do lado). Não exige âncora em TODOS
-  // os valores (isso era rígido demais e reclassificava reajustes normais como
-  // ambíguos) — só que o valor final/mais alto tenha uma âncora, reduzindo o
-  // risco de confundir com uma ambiguidade categórica real (geral vs. supervisor).
+  // categorias distintas de verdade. Distinguimos de duas formas — se
+  // QUALQUER uma bater, tratamos como progressão (não ambiguidade):
+  //
+  // 1) Âncora temporal: o MAIOR valor distinto do caput tem uma referência de
+  //    data grudada do lado ("a partir de", "a contar de", "desde") nas ~100
+  //    posições vizinhas — o padrão típico de reajuste é "valor antigo, novo
+  //    valor a partir de [data]"; só o valor mais recente costuma repetir a
+  //    data.
+  // 2) Âncora de total: o texto anuncia explicitamente que os valores se
+  //    somam ("perfazendo um total de X%", "totalizando R$ X") — comum em
+  //    reajustes salariais partidos em duas parcelas no mesmo período (ex.:
+  //    "6% + 1% = 7%"). Nesse caso o valor "total" declarado é o que vale,
+  //    não o maior individual.
+  //
+  // Funciona igual para valores em R$ e em % — por isso os grupos de captura
+  // cobrem os dois formatos.
+  const ANCORA_TEMPORAL = /(?:(?:a\s+partir\s+de|a\s+contar\s+de|desde)\s+[^.;]{0,100}?(?:R\$\s*([\d.]+(?:,\d{2})?)|([\d]+(?:,\d+)?)\s*%))|(?:(?:R\$\s*([\d.]+(?:,\d{2})?)|([\d]+(?:,\d+)?)\s*%)[^.;]{0,60}?(?:a\s+partir\s+de|a\s+contar\s+de|desde))/gi
+  const ANCORA_TOTAL = /(?:total|totalizando|perfazendo)[^.;]{0,40}?(?:de\s+)?(?:R\$\s*([\d.]+(?:,\d{2})?)|([\d]+(?:,\d+)?)\s*%)/gi
   function ehProgressaoTemporal(caputOriginal, valoresDistintos) {
     if (valoresDistintos.length < 2) return false
-    const ancoras = [...caputOriginal.matchAll(ANCORA_TEMPORAL)]
-    if (ancoras.length === 0) return false
-    const valoresAncorados = ancoras
-      .map(m => parseFloat((m[1] || m[2] || '').replace(/\./g, '').replace(',', '.')))
+    const extrairValoresAncora = regex => [...caputOriginal.matchAll(regex)]
+      .map(m => parseFloat((m[1] || m[2] || m[3] || m[4] || '').replace(/\./g, '').replace(',', '.')))
       .filter(v => !isNaN(v))
+    const valoresAncorados = [...extrairValoresAncora(ANCORA_TEMPORAL), ...extrairValoresAncora(ANCORA_TOTAL)]
+    if (valoresAncorados.length === 0) return false
     const maiorValor = Math.max(...valoresDistintos)
     return valoresAncorados.some(v => Math.abs(v - maiorValor) < 0.01)
   }
   const progressaoMonetaria = ehProgressaoTemporal(
     caput,
     [...new Set(monetariosHeadline.map(n => n.toFixed(2)))].map(Number)
+  )
+  const progressaoPercentual = ehProgressaoTemporal(
+    caput,
+    [...new Set(percentuaisHeadline.map(n => n.toFixed(2)))].map(Number)
   )
 
   // ── Ambiguidade ──────────────────────────────────────────────────────────
@@ -210,8 +238,10 @@ function extrairNumericos(texto) {
   // compararCategoriasParalelas) usando o `caput` retornado abaixo — só cai
   // de fato em "Ambigua" quando essa tentativa também não resolve.
   const distintos = arr => new Set(arr.map(n => n.toFixed(2))).size
-  const ambiguoPercentual = distintos(percentuaisHeadline) > 1
+  const ambiguoPercentual = !progressaoPercentual && (
+    distintos(percentuaisHeadline) > 1
     || (!estruturado && distintos(percentuais) > 1)
+  )
   const ambiguoMonetario = !progressaoMonetaria && (
     distintos(monetariosHeadline) > 1
     || (!estruturado && distintos(monetarios) > 1)
@@ -220,7 +250,7 @@ function extrairNumericos(texto) {
   return {
     percentuais, percentuaisHeadline, monetarios, monetariosHeadline,
     todos: [...percentuais, ...monetarios], estruturado, ambiguoPercentual, ambiguoMonetario,
-    progressaoMonetaria, caput,
+    progressaoMonetaria, progressaoPercentual, caput,
   }
 }
 
@@ -463,8 +493,11 @@ export function avaliarSuperioridade(textoBase, textoComparado, tituloClausula =
         candidatos: { tipo: 'percentual', base: percBaseUsar, comparado: percCompUsar },
       }
     }
-    const maxBase = Math.max(...percBaseUsar)
-    const maxComp = Math.max(...percCompUsar)
+    const temPercHeadlineAmbos = numBase.percentuaisHeadline.length > 0 && numComp.percentuaisHeadline.length > 0
+    const valorRepresentativoPerc = (arr, num) =>
+      (temPercHeadlineAmbos && num.progressaoPercentual) ? arr[arr.length - 1] : Math.max(...arr)
+    const maxBase = valorRepresentativoPerc(percBaseUsar, numBase)
+    const maxComp = valorRepresentativoPerc(percCompUsar, numComp)
     const diff = maxComp - maxBase
     const diffPct = Math.abs(diff).toFixed(2).replace('.', ',')
     if (Math.abs(diff) < 0.01) {

@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../services/supabase'
 import { useAuth } from '../hooks/useAuth'
-import { compararInstrumentos } from '../utils/comparacao'
+import { compararInstrumentos, aplicarParesSugeridosIA } from '../utils/comparacao'
 import { toNumeroOrdinal } from '../utils/ordenacao'
 import CheckList from '../components/UI/CheckList'
 import StepCard from '../components/UI/StepCard'
@@ -11,6 +11,7 @@ import { gerarAnaliseNegocial } from '../services/ai/analiseNegocial'
 import { gerarExcelAnaliseNegocial } from '../services/reports/relatorioNegocialExcel'
 import { gerarParecerObjetivo } from '../services/ai/parecerObjetivo'
 import { gerarExcelComparativoObjetivo } from '../services/reports/comparativoObjetivoExcel'
+import { sugerirParesSemanticos } from '../services/ai/pareamento'
 import { getAIConfig } from '../services/ai/index'
 
 function diffTexto(textoA, textoB) {
@@ -82,6 +83,10 @@ export default function Comparativo() {
   const [erroAnaliseIA,setErroAnaliseIA]=useState('')
   const [gerandoParecerIA,setGerandoParecerIA]=useState(false)
   const [statusParecerIA,setStatusParecerIA]=useState('')
+  const [verificandoIA,setVerificandoIA]=useState(false)
+  const [statusVerificacaoIA,setStatusVerificacaoIA]=useState('')
+  const [pareamentosPendentes,setPareamentosPendentes]=useState(null) // null = nada pendente; array = aguardando revisão
+  const [decisoesPareamento,setDecisoesPareamento]=useState({}) // índice -> true (aceito) / false (rejeitado)
 
   useEffect(()=>{
     if(!user) return
@@ -328,6 +333,65 @@ export default function Comparativo() {
     setGerandoParecerIA(false)
   }
 
+  // ─── Pareamento assistido por IA — fila de confirmação ─────────────────────
+  // Sugere pareamento para as cláusulas que ficaram SUPRIMIDA/NOVA, mas nada é
+  // aplicado ao resultado até o usuário confirmar item a item. Testes reais
+  // mostraram a IA "forçando" correspondências sem base real mesmo com prompt
+  // reforçado e travas automáticas — a revisão humana aqui é a rede de
+  // segurança final antes do pareamento virar parte do resultado.
+  async function iniciarVerificacaoIA(){
+    if(!resultado) return
+    const config=getAIConfig()
+    if(!config?.provedor||!config?.chave){
+      setErroAnaliseIA('Configure um provedor de IA nas Configurações para usar o pareamento assistido.')
+      return
+    }
+    setVerificandoIA(true); setErroAnaliseIA(''); setStatusVerificacaoIA('Pareando cláusulas sem correspondência...')
+    try{
+      const leftoverA=resultado.filter(r=>r.status.label==='SUPRIMIDA').map(r=>r.clausulaA)
+      const leftoverB=resultado.filter(r=>r.status.label==='NOVA').map(r=>r.clausulaB)
+      if(!leftoverA.length||!leftoverB.length){
+        setStatusVerificacaoIA('Não há cláusulas sem correspondência dos dois lados para parear.')
+        setVerificandoIA(false)
+        return
+      }
+      const sugestoes=await sugerirParesSemanticos(leftoverA,leftoverB,setStatusVerificacaoIA)
+      const pendentes=sugestoes.map(s=>({
+        idA:s.idA, idB:s.idB, motivo:s.motivo,
+        clausulaA:leftoverA.find(c=>c.id===s.idA),
+        clausulaB:leftoverB.find(c=>c.id===s.idB),
+      })).filter(p=>p.clausulaA&&p.clausulaB)
+      if(!pendentes.length){
+        setStatusVerificacaoIA('A IA não encontrou pareamentos adicionais.')
+        setVerificandoIA(false)
+      }else{
+        setPareamentosPendentes(pendentes)
+        setDecisoesPareamento(Object.fromEntries(pendentes.map((_,i)=>[i,true]))) // default: aceito, revisável
+        setVerificandoIA(false)
+      }
+    }catch(e){
+      setErroAnaliseIA('Erro no pareamento por IA: '+e.message)
+      setVerificandoIA(false)
+    }
+  }
+
+  function confirmarPareamentosEContinuar(){
+    if(!pareamentosPendentes) return
+    const aceitos=pareamentosPendentes.filter((_,i)=>decisoesPareamento[i]).map(p=>({idA:p.idA,idB:p.idB,motivo:p.motivo}))
+    const novoResultado=aplicarParesSugeridosIA(resultado,aceitos)
+    setResultado(novoResultado)
+    const nAceitos=aceitos.length, nRejeitados=pareamentosPendentes.length-nAceitos
+    setPareamentosPendentes(null)
+    setDecisoesPareamento({})
+    setStatusVerificacaoIA(`✅ ${nAceitos} pareamento(s) aplicado(s), ${nRejeitados} rejeitado(s).`)
+  }
+
+  function cancelarRevisaoPareamento(){
+    setPareamentosPendentes(null)
+    setDecisoesPareamento({})
+    setStatusVerificacaoIA('Revisão de pareamento cancelada — nenhum pareamento novo foi aplicado.')
+  }
+
   return (
     <div className="pb-24">
       <style>{`
@@ -483,8 +547,55 @@ export default function Comparativo() {
               title="Gera uma aba única (Excel) com o conteúdo de cada fonte, o Resultado determinístico já calculado (sem IA) e, por IA, um Parecer objetivo curto + Grau (ALTA/MÉDIA/BAIXA) por ponto.">
               {gerandoParecerIA?'⏳ Gerando parecer...':`📋 Comparativo Objetivo (IA)${selecionados.size>0?` (${selecionados.size})`:''}`}
             </button>
+            {statusVerificacaoIA&&<span className="text-[10px] text-slate-400 max-w-[220px] truncate" title={statusVerificacaoIA}>{statusVerificacaoIA}</span>}
+            <button className="btn-secondary text-xs" onClick={iniciarVerificacaoIA} disabled={verificandoIA}
+              title="Usa a IA para sugerir pareamento entre as cláusulas SUPRIMIDA/NOVA que ficaram sem correspondência — nada é aplicado até você confirmar cada sugestão.">
+              {verificandoIA?'⏳ Pareando...':'🤖 Pareamento com IA'}
+            </button>
           </div>
           {erroAnaliseIA&&<p className="text-xs text-red-600 mb-2">{erroAnaliseIA}</p>}
+
+          {/* ── Fila de confirmação de pareamento por IA ────────────────────── */}
+          {pareamentosPendentes&&(
+            <div className="card p-4 mb-4 border-2 border-indigo-300 bg-indigo-50/50">
+              <p className="text-sm font-semibold text-indigo-800 mb-1">
+                🤖 A IA sugeriu {pareamentosPendentes.length} pareamento(s) novo(s) — revise antes de aplicar
+              </p>
+              <p className="text-xs text-indigo-600 mb-3">
+                Desmarque qualquer sugestão que não pareça o mesmo instituto jurídico. Nada é aplicado ao resultado até você confirmar.
+              </p>
+              <div className="space-y-2 max-h-96 overflow-y-auto pr-1">
+                {pareamentosPendentes.map((p,i)=>(
+                  <label key={i} className={`flex gap-3 items-start p-2.5 rounded-lg border cursor-pointer transition-colors ${decisoesPareamento[i]?'bg-white border-indigo-200':'bg-slate-100 border-slate-200 opacity-60'}`}>
+                    <input
+                      type="checkbox"
+                      checked={!!decisoesPareamento[i]}
+                      onChange={()=>setDecisoesPareamento(d=>({...d,[i]:!d[i]}))}
+                      className="mt-1 flex-shrink-0"
+                    />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs font-semibold text-slate-700 flex flex-wrap items-center gap-1.5">
+                        <span className="px-1.5 py-0.5 rounded-full border bg-purple-100 text-purple-700 border-purple-300">{iA?.nome}</span>
+                        <span>{p.clausulaA.titulo}</span>
+                        <span className="text-indigo-400">↔</span>
+                        <span className="px-1.5 py-0.5 rounded-full border bg-green-100 text-green-700 border-green-300">{iB?.nome}</span>
+                        <span>{p.clausulaB.titulo}</span>
+                      </p>
+                      {p.motivo&&<p className="text-[11px] text-slate-500 mt-1">Motivo da IA: "{p.motivo}"</p>}
+                    </div>
+                  </label>
+                ))}
+              </div>
+              <div className="flex gap-2 mt-3 flex-wrap">
+                <button onClick={confirmarPareamentosEContinuar} className="btn-primary text-xs py-1.5">
+                  {`✅ Confirmar seleção (${Object.values(decisoesPareamento).filter(Boolean).length}/${pareamentosPendentes.length} aceitos)`}
+                </button>
+                <button onClick={()=>setDecisoesPareamento(Object.fromEntries(pareamentosPendentes.map((_,i)=>[i,true])))} className="btn-secondary text-xs py-1.5">Marcar todos</button>
+                <button onClick={()=>setDecisoesPareamento(Object.fromEntries(pareamentosPendentes.map((_,i)=>[i,false])))} className="btn-secondary text-xs py-1.5">Desmarcar todos</button>
+                <button onClick={cancelarRevisaoPareamento} className="text-xs text-slate-400 hover:text-slate-600 py-1.5 ml-auto">Cancelar (não aplicar nenhum)</button>
+              </div>
+            </div>
+          )}
 
           <div className="flex items-center gap-2 mb-2 px-3 py-1.5 bg-slate-50 rounded-lg text-xs text-slate-500">
             <input type="checkbox" checked={todosSelecionados} onChange={toggleSelecionarTodos} className="w-4 h-4 cursor-pointer"/>
@@ -559,6 +670,9 @@ export default function Comparativo() {
           </button>
           <button onClick={gerarRelatorioObjetivoIA} disabled={gerandoParecerIA} className="text-xs bg-white/15 hover:bg-white/25 px-3 py-1.5 rounded-lg transition-colors">
             {gerandoParecerIA?'⏳ Gerando...':'📋 Comparativo Objetivo (IA)'}
+          </button>
+          <button onClick={iniciarVerificacaoIA} disabled={verificandoIA} className="text-xs bg-white/15 hover:bg-white/25 px-3 py-1.5 rounded-lg transition-colors">
+            {verificandoIA?'⏳ Pareando...':'🤖 Pareamento com IA'}
           </button>
           <button onClick={()=>setSelecionados(new Set())} className="text-xs opacity-60 hover:opacity-100 ml-1">✕ Limpar</button>
         </div>
