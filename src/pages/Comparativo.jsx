@@ -87,6 +87,7 @@ export default function Comparativo() {
   const [statusVerificacaoIA,setStatusVerificacaoIA]=useState('')
   const [pareamentosPendentes,setPareamentosPendentes]=useState(null) // null = nada pendente; array = aguardando revisão
   const [decisoesPareamento,setDecisoesPareamento]=useState({}) // índice -> true (aceito) / false (rejeitado)
+  const [expandidoPareamento,setExpandidoPareamento]=useState({}) // índice -> true (mostrando texto completo das cláusulas)
 
   useEffect(()=>{
     if(!user) return
@@ -365,8 +366,19 @@ export default function Comparativo() {
         setStatusVerificacaoIA('A IA não encontrou pareamentos adicionais.')
         setVerificandoIA(false)
       }else{
+        // Marca conflito quando a mesma cláusula foi sugerida como par de
+        // mais de uma correspondência ao mesmo tempo — sinal forte de que
+        // pelo menos uma das sugestões está errada.
+        const contagemA={}, contagemB={}
+        for(const p of pendentes){
+          contagemA[p.idA]=(contagemA[p.idA]||0)+1
+          contagemB[p.idB]=(contagemB[p.idB]||0)+1
+        }
+        for(const p of pendentes) p.conflito = contagemA[p.idA]>1 || contagemB[p.idB]>1
         setPareamentosPendentes(pendentes)
-        setDecisoesPareamento(Object.fromEntries(pendentes.map((_,i)=>[i,true]))) // default: aceito, revisável
+        setExpandidoPareamento({})
+        // default: aceito, exceto quando em conflito — força revisão manual (começa desmarcado)
+        setDecisoesPareamento(Object.fromEntries(pendentes.map((p,i)=>[i,!p.conflito])))
         setVerificandoIA(false)
       }
     }catch(e){
@@ -383,12 +395,14 @@ export default function Comparativo() {
     const nAceitos=aceitos.length, nRejeitados=pareamentosPendentes.length-nAceitos
     setPareamentosPendentes(null)
     setDecisoesPareamento({})
+    setExpandidoPareamento({})
     setStatusVerificacaoIA(`✅ ${nAceitos} pareamento(s) aplicado(s), ${nRejeitados} rejeitado(s).`)
   }
 
   function cancelarRevisaoPareamento(){
     setPareamentosPendentes(null)
     setDecisoesPareamento({})
+    setExpandidoPareamento({})
     setStatusVerificacaoIA('Revisão de pareamento cancelada — nenhum pareamento novo foi aplicado.')
   }
 
@@ -564,26 +578,50 @@ export default function Comparativo() {
               <p className="text-xs text-indigo-600 mb-3">
                 Desmarque qualquer sugestão que não pareça o mesmo instituto jurídico. Nada é aplicado ao resultado até você confirmar.
               </p>
-              <div className="space-y-2 max-h-96 overflow-y-auto pr-1">
+              <div className="space-y-2 max-h-[32rem] overflow-y-auto pr-1">
                 {pareamentosPendentes.map((p,i)=>(
-                  <label key={i} className={`flex gap-3 items-start p-2.5 rounded-lg border cursor-pointer transition-colors ${decisoesPareamento[i]?'bg-white border-indigo-200':'bg-slate-100 border-slate-200 opacity-60'}`}>
-                    <input
-                      type="checkbox"
-                      checked={!!decisoesPareamento[i]}
-                      onChange={()=>setDecisoesPareamento(d=>({...d,[i]:!d[i]}))}
-                      className="mt-1 flex-shrink-0"
-                    />
-                    <div className="min-w-0 flex-1">
-                      <p className="text-xs font-semibold text-slate-700 flex flex-wrap items-center gap-1.5">
-                        <span className="px-1.5 py-0.5 rounded-full border bg-purple-100 text-purple-700 border-purple-300">{iA?.nome}</span>
-                        <span>{p.clausulaA.titulo}</span>
-                        <span className="text-indigo-400">↔</span>
-                        <span className="px-1.5 py-0.5 rounded-full border bg-green-100 text-green-700 border-green-300">{iB?.nome}</span>
-                        <span>{p.clausulaB.titulo}</span>
-                      </p>
-                      {p.motivo&&<p className="text-[11px] text-slate-500 mt-1">Motivo da IA: "{p.motivo}"</p>}
-                    </div>
-                  </label>
+                  <div key={i} className={`rounded-lg border transition-colors ${p.conflito?'bg-amber-50 border-amber-300':(decisoesPareamento[i]?'bg-white border-indigo-200':'bg-slate-100 border-slate-200 opacity-60')}`}>
+                    <label className="flex gap-3 items-start p-2.5 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={!!decisoesPareamento[i]}
+                        onChange={()=>setDecisoesPareamento(d=>({...d,[i]:!d[i]}))}
+                        className="mt-1 flex-shrink-0"
+                      />
+                      <div className="min-w-0 flex-1">
+                        <p className="text-xs font-semibold text-slate-700 flex flex-wrap items-center gap-1.5">
+                          <span className="px-1.5 py-0.5 rounded-full border bg-purple-100 text-purple-700 border-purple-300">{iA?.nome}</span>
+                          <span>{p.clausulaA.titulo}</span>
+                          <span className="text-indigo-400">↔</span>
+                          <span className="px-1.5 py-0.5 rounded-full border bg-green-100 text-green-700 border-green-300">{iB?.nome}</span>
+                          <span>{p.clausulaB.titulo}</span>
+                        </p>
+                        {p.conflito&&(
+                          <p className="text-[11px] font-semibold text-amber-700 mt-1">
+                            ⚠️ Conflito: esta cláusula foi sugerida como par de mais de uma correspondência ao mesmo tempo — provavelmente só uma está certa. Revise o texto com atenção antes de aceitar.
+                          </p>
+                        )}
+                        {p.motivo&&<p className="text-[11px] text-slate-500 mt-1">Motivo da IA: "{p.motivo}"</p>}
+                        <button
+                          type="button"
+                          onClick={(e)=>{e.preventDefault(); setExpandidoPareamento(x=>({...x,[i]:!x[i]}))}}
+                          className="text-[11px] text-indigo-500 hover:text-indigo-700 underline mt-1"
+                        >
+                          {expandidoPareamento[i]?'▲ ocultar texto das cláusulas':'▼ ver texto das cláusulas'}
+                        </button>
+                        {expandidoPareamento[i]&&(
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2">
+                            <div className="text-[11px] bg-slate-50 border border-slate-200 rounded p-2 max-h-40 overflow-y-auto whitespace-pre-wrap">
+                              <span className="font-semibold text-slate-600">{iA?.nome} — {p.clausulaA.titulo}:</span>{'\n'}{p.clausulaA.conteudo}
+                            </div>
+                            <div className="text-[11px] bg-slate-50 border border-slate-200 rounded p-2 max-h-40 overflow-y-auto whitespace-pre-wrap">
+                              <span className="font-semibold text-slate-600">{iB?.nome} — {p.clausulaB.titulo}:</span>{'\n'}{p.clausulaB.conteudo}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </label>
+                  </div>
                 ))}
               </div>
               <div className="flex gap-2 mt-3 flex-wrap">

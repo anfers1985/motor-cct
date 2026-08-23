@@ -94,6 +94,7 @@ export default function Negociacao() {
   const [statusVerificacaoIA, setStatusVerificacaoIA] = useState('')
   const [pareamentosPendentes, setPareamentosPendentes] = useState(null) // null = nada pendente; array = aguardando revisão
   const [decisoesPareamento, setDecisoesPareamento] = useState({}) // índice -> true (aceito) / false (rejeitado)
+  const [expandidoPareamento, setExpandidoPareamento] = useState({}) // índice -> true (mostrando texto completo das cláusulas)
   const [gerandoAnaliseIA, setGerandoAnaliseIA] = useState(false)
   const [statusAnaliseIA, setStatusAnaliseIA] = useState('')
   const [gerandoParecerIA, setGerandoParecerIA] = useState(false)
@@ -322,8 +323,26 @@ export default function Negociacao() {
         setStatusVerificacaoIA('Nenhum pareamento novo sugerido — seguindo para refinamento/auditoria...')
         await continuarRefinamentoEAuditoria(resultado)
       } else {
+        // Marca conflito quando a mesma cláusula (de A ou de B) foi sugerida
+        // como par de mais de uma cláusula do outro lado, dentro da mesma
+        // fonte comparada — sinal forte de que pelo menos uma das sugestões
+        // está errada (duas cláusulas não podem legitimamente corresponder
+        // ao mesmo par). Caso real confirmado: "Ressarcimento Refeições e
+        // Hospedagem" sugerido tanto para "Refeição" quanto para "Reuniões e
+        // Convenções" ao mesmo tempo — só um dos dois é o instituto certo.
+        const contagemA = {}, contagemB = {}
+        for (const p of pendentes) {
+          const chaveA = `${p.fc}|A|${p.idA}`, chaveB = `${p.fc}|B|${p.idB}`
+          contagemA[chaveA] = (contagemA[chaveA] || 0) + 1
+          contagemB[chaveB] = (contagemB[chaveB] || 0) + 1
+        }
+        for (const p of pendentes) {
+          p.conflito = contagemA[`${p.fc}|A|${p.idA}`] > 1 || contagemB[`${p.fc}|B|${p.idB}`] > 1
+        }
         setPareamentosPendentes(pendentes)
-        setDecisoesPareamento(Object.fromEntries(pendentes.map((_, i) => [i, true]))) // default: aceito, revisável
+        setExpandidoPareamento({})
+        // default: aceito, exceto quando em conflito — nesse caso força revisão manual (começa desmarcado)
+        setDecisoesPareamento(Object.fromEntries(pendentes.map((p, i) => [i, !p.conflito])))
         setVerificandoIA(false)
       }
     } catch (e) {
@@ -352,12 +371,14 @@ export default function Negociacao() {
     const rejeitados = pareamentosPendentes.length - aceitos
     setPareamentosPendentes(null)
     setDecisoesPareamento({})
+    setExpandidoPareamento({})
     await continuarRefinamentoEAuditoria(resultadoAtual, `${aceitos} pareamento(s) aceito(s), ${rejeitados} rejeitado(s). `)
   }
 
   function cancelarRevisaoPareamento() {
     setPareamentosPendentes(null)
     setDecisoesPareamento({})
+    setExpandidoPareamento({})
     setVerificandoIA(false)
     setStatusVerificacaoIA('Revisão de pareamento cancelada — nenhum pareamento novo foi aplicado.')
   }
@@ -878,26 +899,50 @@ export default function Negociacao() {
               <p className="text-xs text-indigo-600 mb-3">
                 Desmarque qualquer sugestão que não pareça o mesmo instituto jurídico. Nada é aplicado ao resultado até você confirmar.
               </p>
-              <div className="space-y-2 max-h-96 overflow-y-auto pr-1">
+              <div className="space-y-2 max-h-[32rem] overflow-y-auto pr-1">
                 {pareamentosPendentes.map((p, i) => (
-                  <label key={i} className={`flex gap-3 items-start p-2.5 rounded-lg border cursor-pointer transition-colors ${decisoesPareamento[i] ? 'bg-white border-indigo-200' : 'bg-slate-100 border-slate-200 opacity-60'}`}>
-                    <input
-                      type="checkbox"
-                      checked={!!decisoesPareamento[i]}
-                      onChange={() => setDecisoesPareamento(d => ({ ...d, [i]: !d[i] }))}
-                      className="mt-1 flex-shrink-0"
-                    />
-                    <div className="min-w-0 flex-1">
-                      <p className="text-xs font-semibold text-slate-700 flex flex-wrap items-center gap-1.5">
-                        <span className={`px-1.5 py-0.5 rounded-full border ${FONTES_CONFIG[p.fc]?.cor}`}>{FONTES_CONFIG[resultado.baseEfetiva]?.label}</span>
-                        <span>{p.clausulaA.titulo}</span>
-                        <span className="text-indigo-400">↔</span>
-                        <span className={`px-1.5 py-0.5 rounded-full border ${FONTES_CONFIG[p.fc]?.cor}`}>{FONTES_CONFIG[p.fc]?.label}</span>
-                        <span>{p.clausulaB.titulo}</span>
-                      </p>
-                      {p.motivo && <p className="text-[11px] text-slate-500 mt-1">Motivo da IA: "{p.motivo}"</p>}
-                    </div>
-                  </label>
+                  <div key={i} className={`rounded-lg border transition-colors ${p.conflito ? 'bg-amber-50 border-amber-300' : (decisoesPareamento[i] ? 'bg-white border-indigo-200' : 'bg-slate-100 border-slate-200 opacity-60')}`}>
+                    <label className="flex gap-3 items-start p-2.5 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={!!decisoesPareamento[i]}
+                        onChange={() => setDecisoesPareamento(d => ({ ...d, [i]: !d[i] }))}
+                        className="mt-1 flex-shrink-0"
+                      />
+                      <div className="min-w-0 flex-1">
+                        <p className="text-xs font-semibold text-slate-700 flex flex-wrap items-center gap-1.5">
+                          <span className={`px-1.5 py-0.5 rounded-full border ${FONTES_CONFIG[p.fc]?.cor}`}>{FONTES_CONFIG[resultado.baseEfetiva]?.label}</span>
+                          <span>{p.clausulaA.titulo}</span>
+                          <span className="text-indigo-400">↔</span>
+                          <span className={`px-1.5 py-0.5 rounded-full border ${FONTES_CONFIG[p.fc]?.cor}`}>{FONTES_CONFIG[p.fc]?.label}</span>
+                          <span>{p.clausulaB.titulo}</span>
+                        </p>
+                        {p.conflito && (
+                          <p className="text-[11px] font-semibold text-amber-700 mt-1">
+                            ⚠️ Conflito: esta cláusula foi sugerida como par de mais de uma correspondência ao mesmo tempo — provavelmente só uma está certa. Revise o texto com atenção antes de aceitar.
+                          </p>
+                        )}
+                        {p.motivo && <p className="text-[11px] text-slate-500 mt-1">Motivo da IA: "{p.motivo}"</p>}
+                        <button
+                          type="button"
+                          onClick={(e) => { e.preventDefault(); setExpandidoPareamento(x => ({ ...x, [i]: !x[i] })) }}
+                          className="text-[11px] text-indigo-500 hover:text-indigo-700 underline mt-1"
+                        >
+                          {expandidoPareamento[i] ? '▲ ocultar texto das cláusulas' : '▼ ver texto das cláusulas'}
+                        </button>
+                        {expandidoPareamento[i] && (
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2">
+                            <div className="text-[11px] bg-slate-50 border border-slate-200 rounded p-2 max-h-40 overflow-y-auto whitespace-pre-wrap">
+                              <span className="font-semibold text-slate-600">{FONTES_CONFIG[resultado.baseEfetiva]?.label} — {p.clausulaA.titulo}:</span>{'\n'}{p.clausulaA.conteudo}
+                            </div>
+                            <div className="text-[11px] bg-slate-50 border border-slate-200 rounded p-2 max-h-40 overflow-y-auto whitespace-pre-wrap">
+                              <span className="font-semibold text-slate-600">{FONTES_CONFIG[p.fc]?.label} — {p.clausulaB.titulo}:</span>{'\n'}{p.clausulaB.conteudo}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </label>
+                  </div>
                 ))}
               </div>
               <div className="flex gap-2 mt-3 flex-wrap">
