@@ -95,6 +95,56 @@ function jaccard(setA, setB) {
   return intersection.size / union.size
 }
 
+// ─── Travas semânticas anti-falso-positivo (casamento automático) ────────────
+// Historicamente essas travas só existiam do lado do pareamento por IA
+// (services/ai/pareamento.js), porque os casos confirmados de erro vinham de
+// lá. O mesmo tipo de erro é PLAUSÍVEL no casamento puramente lexical
+// (Jaccard/matchGrupo*): duas cláusulas de institutos DIFERENTES cruzando o
+// limiar de similaridade só por compartilharem uma palavra ambígua ou um termo
+// jurídico genérico demais. Isto NÃO foi observado num caso real até o momento
+// (25-26/08/2026) — é uma blindagem preventiva, não a correção de um bug
+// confirmado. Motivo pra manter mesmo assim: com centenas de instrumentos de
+// setores diferentes, o volume de dados aumenta a chance de colisão lexical
+// desse tipo; e testada contra todos os pares reais processados até aqui, a
+// trava não bloqueou nenhum pareamento legítimo (ver comparacao.test.js).
+// Por isso as duas travas abaixo agora são exportadas e usadas tanto aqui
+// (matchGrupo/matchGrupoNeg) quanto em services/ai/pareamento.js — uma única
+// fonte de verdade em vez de duas implementações que podem divergir.
+
+const MARCADORES_PATRONAL = /\bpatronal\b|categoria\s+econ[oô]mica|sindicato\s+(das\s+)?empresas/i
+const MARCADORES_PROFISSIONAL = /categoria\s+profissional|sindicato\s+profissional|desconto\s+d[oa]s?\s+sal[aá]rio|do\s+empregado/i
+
+// Contribuições/taxas sindicais patronais e profissionais usam vocabulário
+// parecido (contribuição, taxa, sindicato, desconto, valores) mas NUNCA são o
+// mesmo instituto — ver histórico completo em services/ai/pareamento.js.
+export function familiasIncompativeis(textoA, textoB) {
+  const a = textoA || '', b = textoB || ''
+  const aPatronal = MARCADORES_PATRONAL.test(a), aProfissional = MARCADORES_PROFISSIONAL.test(a)
+  const bPatronal = MARCADORES_PATRONAL.test(b), bProfissional = MARCADORES_PROFISSIONAL.test(b)
+  return (aPatronal && bProfissional && !bPatronal) || (bPatronal && aProfissional && !aPatronal)
+}
+
+// Termos jurídico-trabalhistas comuns demais para, SOZINHOS, provarem que duas
+// cláusulas tratam do mesmo instituto (mesma razão pela qual "gratificação"
+// foi tirada do mapa de sinônimos acima: uma palavra genérica em comum não é
+// evidência de mesmo instituto). Se o único token compartilhado entre dois
+// títulos pertencer a este conjunto, isso não deve, sozinho, empurrar um par
+// para cima do limiar de similaridade.
+const TERMOS_GENERICOS_DEMAIS = new Set([
+  'compensacao', 'salario', 'beneficio', 'contribuicao', 'adicional',
+  'auxilio', 'taxa', 'vale', 'plano', 'seguro', 'licenca', 'assistencia',
+])
+
+// true quando TODO token em comum entre os dois títulos é genérico demais
+// (nenhuma palavra específica o suficiente para confirmar o mesmo instituto).
+export function tituloApenasGenerico(tituloA, tituloB) {
+  const tA = new Set(tokenizeSin(tituloA || ''))
+  const tB = new Set(tokenizeSin(tituloB || ''))
+  const overlap = [...tA].filter(t => tB.has(t))
+  if (overlap.length === 0) return false
+  return overlap.every(t => TERMOS_GENERICOS_DEMAIS.has(t))
+}
+
 export function similaridade(textoA, textoB) {
   const tA = new Set(tokenize(textoA || ''))
   const tB = new Set(tokenize(textoB || ''))
@@ -148,6 +198,31 @@ function extrairCaput(texto) {
   const m = texto.match(MARCADOR_PARAGRAFO)
   const limite = m ? m.index : CAPUT_MAX
   return texto.slice(0, limite)
+}
+
+// ─── Faixas salariais mistas (% para uma faixa, R$ fixo para outra) ─────────
+// Caso real confirmado (negociacao_sindical + comparativo_objetivo,
+// 25/08/2026): cláusula de reajuste
+// com "a) até R$ 9.000,00: 4,11%" / "b) acima de R$ 9.000,01: R$ 369,90 fixo".
+// A extração de manchete (percentuaisHeadline) pega só o 4,11% — o valor de
+// R$ 369,90 da segunda faixa nunca entra na comparação. Isso não é pareamento
+// errado, é uma cláusula condicional (o reajuste depende da remuneração do
+// empregado) que o motor não modela faixa a faixa. Detectar esse padrão e
+// avisar no resultado evita reportar "a base prevê 4,11%" como se isso
+// valesse pra toda a categoria, quando na verdade só vale pra quem ganha até
+// o teto — quem ganha mais recebe um valor fixo, não percentual.
+const REGEX_FAIXA_LIMITE = /\b(at[ée]|acima de|superior a|inferior a)\s+R\$\s*[\d.,]+/gi
+
+function temFaixasSalariaisMistas(texto) {
+  if (!texto) return false
+  const caput = extrairCaput(texto)
+  const faixas = caput.match(REGEX_FAIXA_LIMITE) || []
+  if (faixas.length < 2) return false
+  const temPercentual = /\d+(?:,\d+)?\s?%/.test(caput)
+  const totalMonetarios = (caput.match(/R\$\s*[\d.,]+/g) || []).length
+  // Precisa de percentual E de mais valores em R$ do que só os limites das
+  // faixas (senão os R$ encontrados são só os tetos, não um valor fixo real)
+  return temPercentual && totalMonetarios > faixas.length
 }
 
 function extrairNumericos(texto) {
@@ -446,6 +521,20 @@ export function avaliarSuperioridade(textoBase, textoComparado, tituloClausula =
         resumo: `A cláusula da base refere-se a um reajuste de período já encerrado (vencida) — já aplicado e consumido nos salários. A comparada trata de um reajuste para o período vigente, não havendo reajuste correspondente ativo na base para o novo período.${contextoVigencia}`,
       }
     }
+
+    // Faixas salariais mistas: ver temFaixasSalariaisMistas acima. Isso roda
+    // ANTES da comparação por percentual — se a cláusula tem faixa por
+    // remuneração com tipos de valor diferentes (% numa faixa, R$ fixo
+    // noutra), reportar só a manchete percentual seria enganoso.
+    const baseTemFaixas = temFaixasSalariaisMistas(textoBase)
+    const compTemFaixas = temFaixasSalariaisMistas(textoComparado)
+    if (baseTemFaixas || compTemFaixas) {
+      const qual = baseTemFaixas && compTemFaixas ? 'Ambas as fontes têm' : (baseTemFaixas ? 'A base tem' : 'A comparada tem')
+      return {
+        status: 'Ambigua',
+        resumo: `${qual} faixas salariais distintas (percentual para uma faixa de remuneração, valor fixo em R$ para outra) — a comparação automática não modela faixa a faixa e reportar apenas o percentual da primeira faixa seria incompleto. Requer confirmação manual, comparando cada faixa de remuneração separadamente.${contextoVigencia}`,
+      }
+    }
   }
 
   // ── Comparação numérica ──
@@ -641,10 +730,18 @@ function matchGrupo(grupoA, grupoB, threshold) {
   const pairs = []
   for (const a of grupoA) {
     for (const b of grupoB) {
+      if (familiasIncompativeis(`${a.titulo} ${a.conteudo || ''}`, `${b.titulo} ${b.conteudo || ''}`)) continue
       const scoreTitle   = similaridade(a.titulo, b.titulo)
       const scoreContent = similaridade(a.conteudo, b.conteudo)
       const score = scoreTitle * 0.4 + scoreContent * 0.6
-      if (score > threshold) pairs.push({ a, b, score })
+      if (score <= threshold) continue
+      // Se o par só cruzou o limiar por causa de uma palavra genérica demais
+      // em comum no título (ex.: "compensação", "salário") e o conteúdo em si
+      // tem pouquíssima relação, exige uma barra maior antes de aceitar —
+      // blindagem preventiva (não corresponde a um caso confirmado nos dados
+      // vistos até agora, ver nota em TERMOS_GENERICOS_DEMAIS acima).
+      if (tituloApenasGenerico(a.titulo, b.titulo) && scoreContent < 0.15) continue
+      pairs.push({ a, b, score })
     }
   }
   pairs.sort((x, y) => y.score - x.score)
@@ -708,6 +805,7 @@ function matchGrupoNeg(grupoA, grupoB) {
     const tokConteudoA = tokenize(a.conteudo || '')
     const tokTituloASin = new Set(tokenizeSin(a.titulo || ''))
     for (const b of grupoB) {
+      if (familiasIncompativeis(`${a.titulo} ${a.conteudo || ''}`, `${b.titulo} ${b.conteudo || ''}`)) continue
       const tokConteudoB = tokenize(b.conteudo || '')
       const curto = Math.min(tokConteudoA.length, tokConteudoB.length) < 10
 
@@ -717,17 +815,26 @@ function matchGrupoNeg(grupoA, grupoB) {
       if (curto) {
         // Exige ao menos 1 token (normalizado por sinônimo) em comum entre os
         // títulos — evita parear temas totalmente distintos (ex: "Gratificação
-        // de Férias" com "PPR") só porque ambos têm conteúdo curto.
+        // de Férias" com "PPR") só porque ambos têm conteúdo curto. Mas um
+        // único token genérico demais (ex.: "salário", "compensação") também
+        // não basta sozinho — precisa ser específico o bastante pra identificar
+        // o MESMO instituto — exemplo hipotético: "Salário Ingresso" ×
+        // "Salário Substituição" seriam institutos diferentes que só
+        // compartilhariam a palavra "salário" (blindagem preventiva, sem
+        // caso confirmado nos dados vistos até agora).
         const tokTituloBSin = new Set(tokenizeSin(b.titulo || ''))
-        const overlap = [...tokTituloASin].some(t => tokTituloBSin.has(t))
-        if (!overlap) continue
+        const overlapTokens = [...tokTituloASin].filter(t => tokTituloBSin.has(t))
+        if (overlapTokens.length === 0) continue
+        if (overlapTokens.every(t => TERMOS_GENERICOS_DEMAIS.has(t))) continue
       }
 
       // Para textos curtos usa apenas título (com sinônimos); caso contrário, combinado
       const score = curto ? scoreTitulo : (scoreTitulo * 0.4 + scoreConteudo * 0.6)
       const threshold = curto ? 0.25 : 0.30
 
-      if (score > threshold) pairs.push({ a, b, score })
+      if (score <= threshold) continue
+      if (!curto && tituloApenasGenerico(a.titulo, b.titulo) && scoreConteudo < 0.15) continue
+      pairs.push({ a, b, score })
     }
   }
   pairs.sort((x, y) => y.score - x.score)

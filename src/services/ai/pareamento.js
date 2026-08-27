@@ -18,6 +18,7 @@
 
 import { getAIConfig } from './index.js'
 import { chamarProvedor, extrairJSON } from './chamada.js'
+import { familiasIncompativeis } from '../../utils/comparacao.js'
 
 const MAX_CONTEUDO_PROMPT = 500 // caracteres de conteúdo por cláusula no prompt (suficiente para julgar o tema)
 
@@ -112,22 +113,10 @@ vazio [] se nenhum par for identificado):
 [{"idA":"A0","idB":"B3","motivo":"1 frase curta explicando por que é o mesmo instituto","confianca":"alta"}]`
 }
 
-const MARCADORES_PATRONAL = /\bpatronal\b|categoria\s+econ[oô]mica|sindicato\s+(das\s+)?empresas/i
-const MARCADORES_PROFISSIONAL = /categoria\s+profissional|sindicato\s+profissional|desconto\s+d[oa]s?\s+sal[aá]rio|do\s+empregado/i
-
-// Trava determinística (não depende da IA seguir instrução): contribuições
-// sindicais patronais (pagas pela empresa ao sindicato PATRONAL) e
-// profissionais/laborais (descontadas do empregado em favor do sindicato
-// PROFISSIONAL) usam vocabulário parecido (contribuição, taxa, sindicato,
-// valores) mas NUNCA são o mesmo instituto. A IA já errou esse pareamento
-// mais de uma vez mesmo com instrução explícita no prompt — por isso este
-// bloqueio roda de qualquer forma, depois da resposta da IA, e nunca deixa
-// esse tipo de par passar independente do que o modelo disser.
-function familiasIncompativeis(textoA, textoB) {
-  const aPatronal = MARCADORES_PATRONAL.test(textoA), aProfissional = MARCADORES_PROFISSIONAL.test(textoA)
-  const bPatronal = MARCADORES_PATRONAL.test(textoB), bProfissional = MARCADORES_PROFISSIONAL.test(textoB)
-  return (aPatronal && bProfissional && !bPatronal) || (bPatronal && aProfissional && !aPatronal)
-}
+// familiasIncompativeis agora mora em utils/comparacao.js — é a mesma trava
+// determinística (patronal × profissional nunca é o mesmo instituto) usada
+// também pelo casamento automático (matchGrupo/matchGrupoNeg), pra não ter
+// duas implementações que podem divergir com o tempo.
 
 // Trava determinística nº 2: se o "motivo" da IA afirma que AMBAS as cláusulas
 // tratam de percentual (ou de valor monetário), mas uma delas não tem NENHUM
