@@ -21,6 +21,7 @@ import {
   familiasIncompativeis,
   tituloApenasGenerico,
   compararInstrumentosNeg,
+  resultadoTexto,
 } from './comparacao.js'
 
 describe('avaliarSuperioridade — reajuste em faixas salariais mistas', () => {
@@ -97,6 +98,42 @@ describe('tituloApenasGenerico — termo genérico demais não prova mesmo insti
 
   it('caso real confirmado (comparativo_objetivo_2026-08-26.xlsx, ponto 14): "Contribuição Assistencial Negocial" × "Contribuição Negocial dos Empregados" é pareamento legítimo — não deve ser tratado como só-genérico porque compartilham também "negocial"', () => {
     expect(tituloApenasGenerico('CONTRIBUIÇÃO ASSISTENCIAL NEGOCIAL', 'CONTRIBUIÇÃO NEGOCIAL DOS EMPREGADOS')).toBe(false)
+  })
+})
+
+describe('resultadoTexto — nunca perde o resumo (regressão do bug de 28/08/2026)', () => {
+  // Caso real confirmado: comparativo_objetivo_2026-08-28.xlsx trazia
+  // "? Ambígua" sem NENHUM texto em 3 células (Reajuste Salarial, Piso
+  // Salarial), enquanto negociacao_sindical_2026-08-28.xlsx, com os MESMOS
+  // dados, trazia a explicação completa. Causa raiz: Negociacao.jsx tinha duas
+  // implementações independentes de "montar o texto do resultado" — uma
+  // (exportarExcel) incluía av.resumo, a outra (montarPontosNegociacao, usada
+  // pelo Comparativo Objetivo) não. resultadoTexto() unifica as duas.
+  it('inclui o resumo para status Ambigua', () => {
+    const av = { status: 'Ambigua', resumo: 'Ambas as fontes têm faixas salariais distintas...' }
+    const texto = resultadoTexto(av, 'ACT', 'Prática do Cliente', true)
+    expect(texto).toContain('Ambígua')
+    expect(texto).toContain('faixas salariais distintas')
+  })
+
+  it('inclui o resumo para qualquer status (Superior, Inferior, Igual, Redação Diferente)', () => {
+    for (const status of ['Superior', 'Inferior', 'Igual', 'Modificada']) {
+      const av = { status, resumo: 'texto explicativo específico deste caso' }
+      const texto = resultadoTexto(av, 'ACT', 'CCT', true)
+      expect(texto).toContain('texto explicativo específico deste caso')
+    }
+  })
+
+  it('não quebra quando não há resumo (ex.: Sem Previsão, que não gera texto extra)', () => {
+    const av = { status: 'Sem previsão' }
+    const texto = resultadoTexto(av, 'ACT', 'CCT', true)
+    expect(texto).not.toContain('undefined')
+    expect(texto).not.toMatch(/— $/)
+  })
+
+  it('retorna null quando não há avaliação (evita "undefined" na planilha)', () => {
+    expect(resultadoTexto(null, 'ACT', 'CCT')).toBeNull()
+    expect(resultadoTexto({}, 'ACT', 'CCT')).toBeNull()
   })
 })
 

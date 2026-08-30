@@ -61,7 +61,7 @@ export function gerarExcelComparativoObjetivo(pontos, resultadosDeterministicos,
   ws['!cols'] = [
     { wch: 5 }, { wch: 30 },
     ...fontesInfo.map(() => ({ wch: 50 })),
-    ...colunasResultado.map(() => ({ wch: 20 })),
+    ...colunasResultado.map(() => ({ wch: 45 })),
     { wch: 55 }, { wch: 12 },
   ]
   XLSX.utils.book_append_sheet(wb, ws, 'Comparativo Objetivo')

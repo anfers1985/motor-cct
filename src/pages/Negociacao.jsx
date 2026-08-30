@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { supabase } from '../services/supabase'
 import { useAuth } from '../hooks/useAuth'
-import { compararInstrumentosNeg, avaliarSuperioridade, aplicarParesSugeridosIA, STATUS_CONFIG, fraseVeredito } from '../utils/comparacao'
+import { compararInstrumentosNeg, avaliarSuperioridade, aplicarParesSugeridosIA, STATUS_CONFIG, fraseVeredito, resultadoTexto } from '../utils/comparacao'
 import { getAIConfig } from '../services/ai/index'
 import { sugerirParesSemanticos } from '../services/ai/pareamento'
 import { refinarVereditosAmbiguos, auditarRedacaoDiferente } from '../services/ai/superioridade'
@@ -638,9 +638,7 @@ export default function Negociacao() {
           ? celulaFonte(par.clausulaB, par.motivoIA)
           : (av.status === 'Exclusiva' ? celulaFonte(r.clausulaNova) : 'Não encontrado nesta fonte')
         if (av.status) {
-          const cfg = STATUS_CONFIG[av.status] || {}
-          const headline = fraseVeredito(av.status, fBase, fl, !!r.clausulaBase)
-          resultadoPartes.push(`[${cfg.label || av.status}] ${headline}${av.resumo ? ' — ' + av.resumo : ''}`)
+          resultadoPartes.push(resultadoTexto(av, fBase, fl, !!r.clausulaBase))
         }
       }
       row['Resultado'] = resultadoPartes.join('\n\n')
@@ -669,6 +667,7 @@ export default function Negociacao() {
   // linhasResultado/resultado já calcularam.
   function montarPontosNegociacao() {
     const { comparadas, baseEfetiva } = resultado
+    const fBase = FONTES_CONFIG[baseEfetiva]?.label || baseEfetiva
     const fontesInfo = [
       { chave: baseEfetiva, label: FONTES_CONFIG[baseEfetiva]?.label || baseEfetiva },
       ...comparadas.map(fc => ({ chave: fc, label: FONTES_CONFIG[fc]?.label || fc })),
@@ -685,8 +684,8 @@ export default function Negociacao() {
         porFonte[fc] = clausula ? { ...clausula, motivoIA: par?.motivoIA } : null
         const av = r.avaliacoes?.[fc]
         if (av?.status) {
-          const cfg = STATUS_CONFIG[av.status] || {}
-          det.push({ label: FONTES_CONFIG[fc]?.label || fc, statusLabel: `${cfg.icone || ''} ${cfg.label || av.status}`.trim() })
+          const fl = FONTES_CONFIG[fc]?.label || fc
+          det.push({ label: fl, statusLabel: resultadoTexto(av, fBase, fl, !!r.clausulaBase) })
         }
       }
       resultadosDeterministicos.set(id, det)

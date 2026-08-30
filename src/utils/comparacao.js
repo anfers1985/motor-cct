@@ -410,6 +410,21 @@ export function fraseVeredito(status, baseLabel, fonteLabel, temBaseClausula = t
   }
 }
 
+// Texto legível completo de um veredito: "[Label] frase-resumo do fraseVeredito
+// — resumo detalhado". Usado tanto no export simples de Negociação quanto no
+// Comparativo Objetivo (via Negociacao.jsx/Comparativo.jsx) — existir só aqui
+// evita que os dois caminhos divirjam de novo. Foi exatamente essa duplicação
+// (cada export com sua própria cópia da lógica) que causou o bug confirmado em
+// 28/08/2026: o Comparativo Objetivo mostrava "? Ambígua" sem nenhuma
+// explicação em 3 células, enquanto o export simples (mesma base de dados)
+// sempre trazia o texto completo — porque só ele concatenava av.resumo.
+export function resultadoTexto(av, baseLabel, fonteLabel, temBaseClausula = true) {
+  if (!av?.status) return null
+  const cfg = STATUS_CONFIG[av.status] || {}
+  const headline = fraseVeredito(av.status, baseLabel, fonteLabel, temBaseClausula)
+  return `[${cfg.label || av.status}] ${headline}${av.resumo ? ' — ' + av.resumo : ''}`
+}
+
 // ─── Formata texto de vigência para o resumo ─────────────────────────────────
 function formatarVigencia(vig) {
   if (!vig || (!vig.inicio && !vig.fim)) return ''
