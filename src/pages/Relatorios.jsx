@@ -36,12 +36,12 @@ export default function Relatorios() {
   useEffect(() => {
     if (!user) return
     Promise.all([
-      supabase.from('empresas').select('id,razao_social,cnpj').eq('user_id', user.id).order('razao_social'),
-      supabase.from('operacoes').select('id,nome,codigo').eq('user_id', user.id).order('nome'),
-      supabase.from('sindicatos').select('id,razao_social,sigla,tipo,cnpj').eq('user_id', user.id).order('razao_social'),
+      supabase.from('empresas').select('id,razao_social,cnpj').order('razao_social'),
+      supabase.from('operacoes').select('id,nome,codigo').order('nome'),
+      supabase.from('sindicatos').select('id,razao_social,sigla,tipo,cnpj').order('razao_social'),
       supabase.from('instrumentos')
         .select('id,nome,tipo,vigencia_inicio,vigencia_fim,empresa_id,operacao_id,sindicato_laboral_id,sindicato_patronal_id')
-        .eq('user_id', user.id).eq('status_processamento', 'processado').order('nome'),
+        .eq('status_processamento', 'processado').order('nome'),
     ]).then(([{ data: e }, { data: o }, { data: s }, { data: i }]) => {
       setTodasEmpresas(e || [])
       setTodasOperacoes(o || [])
@@ -177,7 +177,7 @@ export default function Relatorios() {
     let total = 0
     for (const inst of insts) {
       const { count } = await supabase.from('clausulas').select('*', { count: 'exact', head: true })
-        .eq('instrumento_id', inst.id).eq('user_id', user.id)
+        .eq('instrumento_id', inst.id)
       total += count || 0
     }
     setPreview({ count: total, n: insts.length })
@@ -197,7 +197,7 @@ export default function Relatorios() {
 
     let clausulas = []
     for (const inst of insts) {
-      const { data } = await supabase.from('clausulas').select('*').eq('instrumento_id', inst.id).eq('user_id', user.id)
+      const { data } = await supabase.from('clausulas').select('*').eq('instrumento_id', inst.id)
       const base = data || []
       const ids = base.map(c => c.id)
 
@@ -252,9 +252,9 @@ export default function Relatorios() {
         await gerarExcelInstrumento(inst, clausulas, emp, op, sLab, sPat)
       } else {
         const [{ data: emps },{ data: ops },{ data: sinds }] = await Promise.all([
-          supabase.from('empresas').select('*').eq('user_id',user.id),
-          supabase.from('operacoes').select('*').eq('user_id',user.id),
-          supabase.from('sindicatos').select('*').eq('user_id',user.id),
+          supabase.from('empresas').select('*'),
+          supabase.from('operacoes').select('*'),
+          supabase.from('sindicatos').select('*'),
         ])
         await gerarExcelMultiplo(insts, clausulas, emps, ops, sinds)
       }

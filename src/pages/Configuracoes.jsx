@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { PROVEDORES, getAIConfig, saveAIConfig, testarConexao } from '../services/ai'
 import { ultimosMeses, getIndicesManuais, setIndicesManuais } from '../services/indices'
+import GerenciarAcesso from '../components/Admin/GerenciarAcesso'
 
 export default function Configuracoes() {
   const [config, setConfig] = useState({ provedor: 'gemini', chave: '', modelo: '' })
@@ -85,6 +86,8 @@ export default function Configuracoes() {
 
   return (
     <div>
+      <GerenciarAcesso />
+
       <div className="mb-6">
         <h1 className="font-display font-bold text-2xl text-slate-800">Configurações de IA</h1>
         <p className="text-slate-500 text-sm">Configure o provedor de IA para extração de cláusulas</p>

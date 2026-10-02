@@ -28,12 +28,12 @@ export default function Empresas() {
   const [loading, setLoading] = useState(false)
 
   async function carregarEmpresas() {
-    const { data } = await supabase.from('empresas').select('*').eq('user_id', user.id).order('razao_social')
+    const { data } = await supabase.from('empresas').select('*').order('razao_social')
     setEmpresas(data || [])
   }
 
   async function carregarSindicatos() {
-    const { data } = await supabase.from('sindicatos').select('id, razao_social, sigla, tipo').eq('user_id', user.id).order('razao_social')
+    const { data } = await supabase.from('sindicatos').select('id, razao_social, sigla, tipo').order('razao_social')
     setSindicatos(data || [])
   }
 
@@ -42,7 +42,7 @@ export default function Empresas() {
       *, 
       sindicato_laboral:sindicato_laboral_id(razao_social,sigla),
       sindicato_patronal:sindicato_patronal_id(razao_social,sigla)
-    `).eq('empresa_id', empresaId).eq('user_id', user.id)
+    `).eq('empresa_id', empresaId)
     setOperacoes(prev => ({ ...prev, [empresaId]: data || [] }))
   }
 

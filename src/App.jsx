@@ -1,5 +1,6 @@
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { useAuth } from './hooks/useAuth'
+import { useMembro } from './hooks/useMembro'
 import Layout from './components/Layout/Layout'
 import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
@@ -13,8 +14,9 @@ import Relatorios from './pages/Relatorios'
 import Configuracoes from './pages/Configuracoes'
 
 function ProtectedRoute({ children }) {
-  const { user, loading } = useAuth()
-  if (loading) return (
+  const { user, loading, signOut } = useAuth()
+  const membro = useMembro(user)
+  if (loading || (user && membro === null)) return (
     <div className="min-h-screen flex items-center justify-center bg-surface-50">
       <div className="text-center">
         <p className="text-4xl mb-4">⚖️</p>
@@ -23,6 +25,21 @@ function ProtectedRoute({ children }) {
     </div>
   )
   if (!user) return <Navigate to="/login" replace />
+  if (!membro) return (
+    <div className="min-h-screen flex items-center justify-center bg-surface-50 p-6">
+      <div className="max-w-md bg-white rounded-2xl shadow p-8 text-center">
+        <p className="text-4xl mb-3">🔒</p>
+        <h2 className="font-semibold text-slate-800 text-lg mb-2">Acesso pendente</h2>
+        <p className="text-slate-500 text-sm mb-1">Você entrou como:</p>
+        <p className="text-slate-800 text-sm font-medium mb-4">{user.email}</p>
+        <p className="text-slate-500 text-sm mb-6">
+          Este e-mail ainda não foi autorizado. Peça ao administrador para
+          liberar o acesso e depois entre novamente.
+        </p>
+        <button onClick={signOut} className="px-4 py-2 bg-slate-900 text-white rounded-lg text-sm">Sair</button>
+      </div>
+    </div>
+  )
   return <Layout>{children}</Layout>
 }
 

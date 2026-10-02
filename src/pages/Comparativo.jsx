@@ -94,10 +94,10 @@ export default function Comparativo() {
     Promise.all([
       supabase.from('instrumentos')
         .select('id,nome,tipo,vigencia_inicio,vigencia_fim,empresa_id,operacao_id,sindicato_laboral_id,sindicato_patronal_id')
-        .eq('user_id',user.id).eq('status_processamento','processado').order('nome'),
-      supabase.from('empresas').select('id,razao_social,cnpj').eq('user_id',user.id).order('razao_social'),
-      supabase.from('operacoes').select('id,nome,codigo').eq('user_id',user.id).order('nome'),
-      supabase.from('sindicatos').select('id,razao_social,sigla,tipo,cnpj').eq('user_id',user.id).order('razao_social'),
+        .eq('status_processamento','processado').order('nome'),
+      supabase.from('empresas').select('id,razao_social,cnpj').order('razao_social'),
+      supabase.from('operacoes').select('id,nome,codigo').order('nome'),
+      supabase.from('sindicatos').select('id,razao_social,sigla,tipo,cnpj').order('razao_social'),
     ]).then(([{data:insts},{data:emps},{data:ops},{data:sinds}])=>{
       setTodosInstrumentos(insts||[])
       setEmpresas(emps||[])

@@ -51,9 +51,19 @@ export function useAuth() {
     if (error) console.error('Erro no login:', error)
   }
 
+  const signInWithGoogle = async () => {
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: {
+        redirectTo: 'https://anfers1985.github.io/motor-cct/#/login',
+      }
+    })
+    if (error) console.error('Erro no login:', error)
+  }
+
   const signOut = async () => {
     await supabase.auth.signOut()
   }
 
-  return { user, loading, signInWithGitHub, signOut }
+  return { user, loading, signInWithGitHub, signInWithGoogle, signOut }
 }

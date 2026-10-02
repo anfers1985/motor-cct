@@ -387,21 +387,21 @@ export default function Instrumentos() {
       operacao:operacao_id(nome, codigo, estado),
       sindicato_laboral:sindicato_laboral_id(razao_social, sigla),
       sindicato_patronal:sindicato_patronal_id(razao_social, sigla)
-    `).eq('user_id', user.id).order('created_at', { ascending: false })
+    `).order('created_at', { ascending: false })
     setLista(data || [])
   }
 
   useEffect(() => {
     if (!user) return
     carregar()
-    supabase.from('empresas').select('id,razao_social').eq('user_id', user.id).order('razao_social').then(({ data }) => setEmpresas(data || []))
-    supabase.from('sindicatos').select('id,razao_social,sigla,tipo').eq('user_id', user.id).order('razao_social').then(({ data }) => setSindicatos(data || []))
+    supabase.from('empresas').select('id,razao_social').order('razao_social').then(({ data }) => setEmpresas(data || []))
+    supabase.from('sindicatos').select('id,razao_social,sigla,tipo').order('razao_social').then(({ data }) => setSindicatos(data || []))
   }, [user])
 
   async function onEmpresaChange(empresaId) {
     setForm(f => ({ ...f, empresa_id: empresaId, operacao_id: '' }))
     if (!empresaId) { setOperacoes([]); return }
-    const { data } = await supabase.from('operacoes').select('id,nome,codigo,sindicato_laboral_id,sindicato_patronal_id').eq('empresa_id', empresaId).eq('user_id', user.id)
+    const { data } = await supabase.from('operacoes').select('id,nome,codigo,sindicato_laboral_id,sindicato_patronal_id').eq('empresa_id', empresaId)
     setOperacoes(data || [])
   }
 

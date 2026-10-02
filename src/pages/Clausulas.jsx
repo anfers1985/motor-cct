@@ -40,10 +40,10 @@ export default function Clausulas() {
     Promise.all([
       supabase.from('instrumentos')
         .select('id,nome,tipo,empresa_id,operacao_id,sindicato_laboral_id,sindicato_patronal_id')
-        .eq('user_id', user.id).eq('status_processamento', 'processado').order('nome'),
-      supabase.from('empresas').select('id,razao_social,cnpj').eq('user_id', user.id).order('razao_social'),
-      supabase.from('operacoes').select('id,nome,codigo').eq('user_id', user.id).order('nome'),
-      supabase.from('sindicatos').select('id,razao_social,sigla,tipo,cnpj').eq('user_id', user.id).order('razao_social'),
+        .eq('status_processamento', 'processado').order('nome'),
+      supabase.from('empresas').select('id,razao_social,cnpj').order('razao_social'),
+      supabase.from('operacoes').select('id,nome,codigo').order('nome'),
+      supabase.from('sindicatos').select('id,razao_social,sigla,tipo,cnpj').order('razao_social'),
     ]).then(([{data:insts},{data:emps},{data:ops},{data:sinds}]) => {
       setTodosInstrumentos(insts || [])
       setEmpresas(emps || [])
@@ -152,7 +152,7 @@ export default function Clausulas() {
   useEffect(() => {
     if (!sels.instrumento) { setClausulas([]); return }
     setLoading(true)
-    let q = supabase.from('clausulas').select('*').eq('instrumento_id', sels.instrumento).eq('user_id', user.id)
+    let q = supabase.from('clausulas').select('*').eq('instrumento_id', sels.instrumento)
     if (sels.busca) q = q.or(`titulo.ilike.%${sels.busca}%,conteudo.ilike.%${sels.busca}%`)
     q.then(async ({ data }) => {
       const base = data || []

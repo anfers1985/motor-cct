@@ -24,7 +24,7 @@ export default function Sindicatos() {
   const [loading, setLoading] = useState(false)
 
   async function carregar() {
-    const { data } = await supabase.from('sindicatos').select('*').eq('user_id', user.id).order('razao_social')
+    const { data } = await supabase.from('sindicatos').select('*').order('razao_social')
     setLista(data || [])
   }
 

@@ -85,15 +85,15 @@ export default function Dashboard() {
     if (!user) return
     async function load() {
       const [{ count: totalInst }, { count: totalSind }, { count: totalEmp }, { count: totalClaus }] = await Promise.all([
-        supabase.from('instrumentos').select('*', { count: 'exact', head: true }).eq('user_id', user.id),
-        supabase.from('sindicatos').select('*', { count: 'exact', head: true }).eq('user_id', user.id),
-        supabase.from('empresas').select('*', { count: 'exact', head: true }).eq('user_id', user.id),
-        supabase.from('clausulas').select('*', { count: 'exact', head: true }).eq('user_id', user.id),
+        supabase.from('instrumentos').select('*', { count: 'exact', head: true }),
+        supabase.from('sindicatos').select('*', { count: 'exact', head: true }),
+        supabase.from('empresas').select('*', { count: 'exact', head: true }),
+        supabase.from('clausulas').select('*', { count: 'exact', head: true }),
       ])
       const { data: instrumentos } = await supabase
         .from('instrumentos')
         .select('id, nome, tipo, vigencia_fim, status_processamento, created_at')
-        .eq('user_id', user.id)
+        
         .order('created_at', { ascending: false })
       let vigentes = 0, vencidos = 0, alerta = 0
       const alertaList = []
@@ -121,7 +121,7 @@ export default function Dashboard() {
           .select('percentual, instrumento_id, instrumentos(vigencia_inicio, tipo)')
           .eq('categoria', 'Remuneração e Reajuste')
           .ilike('subcategoria', '%reajuste%')
-          .eq('user_id', user.id),
+          ,
       ])
       setApiIndisponivel(apiErr)
       const porMes = {}

@@ -1,7 +1,7 @@
 import { useAuth } from '../hooks/useAuth'
 
 export default function Login() {
-  const { signInWithGitHub } = useAuth()
+  const { signInWithGitHub, signInWithGoogle } = useAuth()
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-brand-950 via-brand-900 to-brand-700 flex items-center justify-center p-6">
@@ -19,7 +19,7 @@ export default function Login() {
         <div className="bg-white rounded-2xl p-8 shadow-2xl">
           <h2 className="font-display font-semibold text-slate-800 text-xl mb-1">Bem-vindo</h2>
           <p className="text-slate-500 text-sm mb-6">
-            Acesse com sua conta GitHub para continuar.
+            Acesse com GitHub ou Google para continuar.
           </p>
 
           <button
@@ -32,9 +32,17 @@ export default function Login() {
             Entrar com GitHub
           </button>
 
+          <button
+            onClick={signInWithGoogle}
+            className="w-full mt-3 flex items-center justify-center gap-3 px-4 py-3 bg-white text-slate-700 border border-slate-300 rounded-xl font-medium hover:bg-slate-50 transition-colors"
+          >
+            <span className="font-bold text-lg leading-none">G</span>
+            Entrar com Google
+          </button>
+
           <div className="mt-6 pt-6 border-t border-slate-100">
             <p className="text-xs text-slate-400 text-center">
-              Seus dados são privados e isolados por conta.<br/>
+              Acesso restrito à equipe autorizada.<br/>
               Sem senha, sem cadastro manual.
             </p>
           </div>
